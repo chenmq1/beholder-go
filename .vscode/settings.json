@@ -1,0 +1,12 @@
+{
+    "maven.view": "hierarchical",
+    "java.configuration.updateBuildConfiguration": "interactive",
+    "java.project.sourcePaths": [
+        "src/main/java",
+        "target/generated-sources/antlr4"
+    ],
+    "java.project.referencedLibraries": [
+        "target/**/*.jar"
+    ],
+    "java.compile.nullAnalysis.mode": "disabled"
+}

@@ -1,0 +1,14 @@
+{
+    "configurations": [
+        {
+            "type": "java",
+            "name": "Spring Boot-BeholderDaemonApplication<beholder_daemon>",
+            "request": "launch",
+            "cwd": "${workspaceFolder}",
+            "mainClass": "beholder_daemon.BeholderDaemonApplication",
+            "projectName": "beholder_daemon",
+            "args": "",
+            "envFile": "${workspaceFolder}/.env"
+        }
+    ]
+}

@@ -1,0 +1,44 @@
+app:
+  name: beholder_daemon
+  port: 8090
+  timezone: Asia/Shanghai
+
+mysql:
+  host: beholder
+  port: 3306
+  username: ryo
+  password: sdsau
+  database: beholder
+  ssl_mode: disable
+
+redis:
+  host: beholder
+  port: 6379
+  db: 0
+  timeout: 3s
+
+rabbitmq:
+  host: beholder
+  port: 5672
+  username: admin
+  password: 1qaz2wsx
+  queue: task.queue
+  acknowledge_mode: manual
+
+web3j:
+  timeout: 40s
+  chains:
+    ethereum: https://rpc.ankr.com/eth/235c573e8082e4aa79bfe5ce70371fd6b6b1ecf90e899d1803e1af16fed952c2
+    bsc: https://rpc.ankr.com/bsc/235c573e8082e4aa79bfe5ce70371fd6b6b1ecf90e899d1803e1af16fed952c2
+    polygon: https://rpc.ankr.com/polygon/235c573e8082e4aa79bfe5ce70371fd6b6b1ecf90e899d1803e1af16fed952c2
+    arbitrum: https://rpc.ankr.com/arbitrum/235c573e8082e4aa79bfe5ce70371fd6b6b1ecf90e899d1803e1af16fed952c2
+    base: https://rpc.ankr.com/base/235c573e8082e4aa79bfe5ce70371fd6b6b1ecf90e899d1803e1af16fed952c2
+    optimism: https://rpc.ankr.com/optimism/235c573e8082e4aa79bfe5ce70371fd6b6b1ecf90e899d1803e1af16fed952c2
+
+task:
+  blockchain:
+    sync_interval: 30s
+  data:
+    cleanup_interval: 1h
+  health:
+    check_interval: 1m
