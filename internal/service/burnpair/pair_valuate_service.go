@@ -90,7 +90,7 @@ func (s *PairValuateService) ProcessTask(message map[string]interface{}) {
 
 	// 从数据库中获取需要评估的交易对
 	var pairs []burnpair.UniswapPair
-	if err := s.db.Where("check_state < ?", CHECK_STATE_CODEGOT).Find(&pairs).Error; err != nil {
+	if err := s.db.Where("deleted=0").Order("updated_block").Find(&pairs).Error; err != nil {
 		log.Printf("获取需要评估的交易对失败: %v", err)
 		record.Status = -1
 		record.Message = "获取需要评估的交易对失败"
@@ -120,15 +120,23 @@ func (s *PairValuateService) ProcessTask(message map[string]interface{}) {
 		var wg sync.WaitGroup
 		var mu sync.Mutex
 
+		// 限制协程数目：最多20个协程同时运行
+		semaphore := make(chan struct{}, 20)
+
 		for _, pair := range pairs {
 			wg.Add(1)
 			go func(p burnpair.UniswapPair) {
 				defer wg.Done()
+				// 获取信号量
+				semaphore <- struct{}{}
+				defer func() { <-semaphore }() // 释放信号量
+				
 				valued := s.pairValuateSubService.ProcessSubTask(&p)
 				mu.Lock()
 				valuable += valued
 				mu.Unlock()
 				// 更新交易对
+				p.UpdatedBlock = latestBlock
 				s.db.Save(&p)
 			}(pair)
 		}
@@ -146,6 +154,9 @@ func (s *PairValuateService) ProcessTask(message map[string]interface{}) {
 		var wg sync.WaitGroup
 		var mu sync.Mutex
 
+		// 限制协程数目：最多20个协程同时运行
+		semaphore := make(chan struct{}, 20)
+
 		for i := 0; i < len(pairs); i += MAX_CONTRACT_QUERY {
 			wg.Add(1)
 			end := i + MAX_CONTRACT_QUERY
@@ -156,6 +167,10 @@ func (s *PairValuateService) ProcessTask(message map[string]interface{}) {
 
 			go func(pairGroup []burnpair.UniswapPair) {
 				defer wg.Done()
+				// 获取信号量
+				semaphore <- struct{}{}
+				defer func() { <-semaphore }() // 释放信号量
+				
 				valued := s.pairValuateSubService.ProcessSubTaskWithSyncEvents(pairGroup, fromBlock, latestBlock)
 				mu.Lock()
 				valuable += valued
