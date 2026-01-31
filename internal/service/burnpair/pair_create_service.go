@@ -69,7 +69,7 @@ func (s *PairCreateService) ProcessTask(message map[string]interface{}) error {
 	// 如果起始区块为0，使用数据库中已处理的最大区块
 	if startBlock == 0 {
 		var maxBlock uint64
-		if err := s.db.Model(&burnpair.BurnPairTask{}).Select("COALESCE(MAX(end_block), 0)").Scan(&maxBlock).Error; err != nil {
+		if err := s.db.Model(&burnpair.BurnPairTask{}).Select("COALESCE(MAX(end_block), 0)").Row().Scan(&maxBlock); err != nil {
 			return fmt.Errorf("获取最大已处理区块失败: %w", err)
 		}
 		startBlock = maxBlock

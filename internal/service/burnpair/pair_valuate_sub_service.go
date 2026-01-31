@@ -115,7 +115,7 @@ func (s *PairValuateSubService) ProcessSubTask(pair *burnpair.UniswapPair) int {
 
 	// 更新交易对信息
 	pair.ValueState = valueState
-	pair.ValueInUsd = valueInUsd
+	pair.ValueInUsd = int(currencyAmount)
 	if valueState == 1 && (pair.CheckState == nil || *pair.CheckState == 0) {
 		checkState := CHECK_STATE_WAITING_CHECK
 		pair.CheckState = &checkState
@@ -232,15 +232,9 @@ func (p *SyncEventProcessor) ProcessEvents(logs []types.Log, original ethereum.F
 			valueState = 1
 		}
 
-		// 确保ValueInUsd不为负数
-		valueInUsd := int(currencyAmountFloat64)
-		if valueInUsd < 0 {
-			valueInUsd = 0
-		}
-
 		// 更新交易对信息
 		pair.ValueState = valueState
-		pair.ValueInUsd = valueInUsd
+		pair.ValueInUsd = int(currencyAmountFloat64)
 		if valueState == 1 && (pair.CheckState == nil || *pair.CheckState == 0) {
 			checkState := CHECK_STATE_WAITING_CHECK
 			pair.CheckState = &checkState
