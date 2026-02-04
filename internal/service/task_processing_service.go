@@ -9,6 +9,7 @@ import (
 
 	"github.com/beholder-daemon/config"
 	"github.com/beholder-daemon/internal/service/burnpair"
+	"github.com/beholder-daemon/internal/service/getcode"
 	"github.com/beholder-daemon/internal/utils"
 )
 
@@ -18,6 +19,7 @@ type TaskProcessingService struct {
 	clients            map[string]*ethclient.Client
 	pairCreateService  *burnpair.PairCreateService
 	pairValuateService *burnpair.PairValuateService
+	codeGetService     *burnpair.CodeGetService
 }
 
 // NewTaskProcessingService 创建TaskProcessingService实例
@@ -48,11 +50,21 @@ func NewTaskProcessingService() (*TaskProcessingService, error) {
 	// 创建PairValuateService实例
 	pairValuateService := burnpair.NewPairValuateService(db, web3Client, utils.NewWeb3Utils())
 
+	// 创建Chains实例
+	chains := config.NewChains()
+
+	// 创建GetCodeService实例
+	getCodeService := getcode.NewGetCodeService(db, chains, clients)
+
+	// 创建CodeGetService实例
+	codeGetService := burnpair.NewCodeGetService(db, getCodeService)
+
 	return &TaskProcessingService{
 		db:                 db,
 		clients:            clients,
 		pairCreateService:  pairCreateService,
 		pairValuateService: pairValuateService,
+		codeGetService:     codeGetService,
 	}, nil
 }
 
@@ -70,6 +82,10 @@ func (s *TaskProcessingService) ProcessTask(message map[string]interface{}) {
 					}
 				case "syncEvent":
 					s.pairValuateService.ProcessTask(message)
+				case "codeGet":
+					if err := s.codeGetService.ProcessTask(); err != nil {
+						fmt.Printf("处理codeGet任务失败: %v\n", err)
+					}
 				default:
 					fmt.Printf("未知任务类型: %s\n", task)
 				}

@@ -177,19 +177,17 @@ func GetShortAddressNeat(longAddress common.Address) string {
 }
 
 // RetryWithIoException 带IO异常重试的通用方法
-func RetryWithIoException[T any](task func() (T, error), maxRetry int) (T, error) {
-	var result T
+func RetryWithIoException(task func() (bool, error), maxRetry int) error {
 	retryCount := 0
 
 	for {
-		var err error
-		result, err = task()
-		if err == nil {
-			return result, nil
+		success, err := task()
+		if success {
+			return nil
 		}
 
 		if retryCount >= maxRetry {
-			return result, err
+			return err
 		}
 
 		fmt.Printf("retry: %v\n", err)
