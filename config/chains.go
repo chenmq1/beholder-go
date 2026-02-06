@@ -58,7 +58,7 @@ func (c *Chains) GetDedaubDecompileURL(chainId int) string {
 func (c *Chains) GetWeb3j(chainId int) string {
 	chainMap := map[int]string{
 		1:    "ethereum",
-		56:   "bsc",
+		56:   "binance",
 		137:  "polygon",
 		42161: "arbitrum",
 		8453: "base",

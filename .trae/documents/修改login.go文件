@@ -1,0 +1,30 @@
+1，清理所有cookie
+2，访问curl ^"https://app.dedaub.com/binance/address/0xd827820a13ff041c43b0b9068aa4d3590b35826f/decompiled^" ^
+  -X ^"OPTIONS^" ^
+  -H ^"accept: */*^" ^
+  -H ^"accept-language: zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6,zh-TW;q=0.5^" ^
+  -H ^"access-control-request-headers: accept,priority,upgrade-insecure-requests^" ^
+  -H ^"access-control-request-method: GET^" ^
+  -H ^"origin: https://auth.dedaub.com^" ^
+  -H ^"priority: u=1, i^" ^
+  -H ^"sec-fetch-dest: empty^" ^
+  -H ^"sec-fetch-mode: cors^" ^
+  -H ^"sec-fetch-site: same-site^" ^
+  -H ^"user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0^"
+  将获取的cookie保存（包括且不限于：__Host-next-auth.csrf-token & __Secure-next-auth.callback-url）
+  此操作会返回307 Temporary Redirect，返回location
+3，重定向到2返回的location，带上所有cookie：
+  curl ^"https://app.dedaub.com/login?callbackUrl=/binance/address/0xd827820a13ff041c43b0b9068aa4d3590b35826f/decompiled^" ^
+  -H ^"accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7^" ^
+  -H ^"accept-language: zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6,zh-TW;q=0.5^" ^
+  -H ^"priority: u=0, i^" ^
+  -H ^"sec-ch-ua: ^\^"Not(A:Brand^\^";v=^\^"8^\^", ^\^"Chromium^\^";v=^\^"144^\^", ^\^"Microsoft Edge^\^";v=^\^"144^\^"^" ^
+  -H ^"sec-ch-ua-mobile: ?0^" ^
+  -H ^"sec-ch-ua-platform: ^\^"Windows^\^"^" ^
+  -H ^"sec-fetch-dest: document^" ^
+  -H ^"sec-fetch-mode: navigate^" ^
+  -H ^"sec-fetch-site: none^" ^
+  -H ^"sec-fetch-user: ?1^" ^
+  -H ^"upgrade-insecure-requests: 1^" ^
+  -H ^"user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0^"
+  将获取的cookie保存
