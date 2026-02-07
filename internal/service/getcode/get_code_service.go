@@ -303,13 +303,15 @@ func (s *GetCodeService) getVerified(address string, chainId int) (map[string]in
 			var data map[string]interface{}
 			if err := json.NewDecoder(response.Body).Decode(&data); err != nil {
 				message += "parse failed, incorrect json structure in response."
+				fmt.Printf("======================verified response:%v\n", response)
 				return nil, message, nil
 			}
-			//fmt.Printf("======================verified response:%v\n", data)
+			
 			if result, ok := data["result"]; ok {
-				if resultMap, ok := result.(map[string]interface{}); ok {
-					return resultMap, message, nil
+				if _, ok := result.([]interface{}); ok {
+					return data, message, nil
 				} else {
+					fmt.Printf("verified response:%s\n", data["result"])
 					message += "parse failed, incorrect result structure in response."
 				}
 			} else {
@@ -378,7 +380,7 @@ func (s *GetCodeService) getDecompiled(address string, chainId int) (string, str
 		req.Header.Set("Cookie", cookieStr)
 
 		// 打印请求详情
-		fmt.Println("\n=== 步骤 2: 发送反编译请求 ===")
+		/*fmt.Println("\n=== 步骤 2: 发送反编译请求 ===")
 		fmt.Println("URL:", req.URL.String())
 		fmt.Println("Method:", req.Method)
 		fmt.Println("请求头:")
@@ -386,7 +388,7 @@ func (s *GetCodeService) getDecompiled(address string, chainId int) (string, str
 			for _, value := range values {
 				fmt.Printf("  %s: %s\n", key, value)
 			}
-		}
+		}*/
 
 		resp, err := client.Do(req)
 		if err != nil {
@@ -410,7 +412,7 @@ func (s *GetCodeService) getDecompiled(address string, chainId int) (string, str
 	response.Body = ioutil.NopCloser(bytes.NewBuffer(respBody))
 
 	// 打印响应详情
-	fmt.Println("\n=== 步骤 2: 收到反编译响应 ===")
+	/*fmt.Println("\n=== 步骤 2: 收到反编译响应 ===")
 	fmt.Println("状态码:", response.StatusCode)
 	fmt.Println("响应头:")
 	for key, values := range response.Header {
@@ -424,7 +426,7 @@ func (s *GetCodeService) getDecompiled(address string, chainId int) (string, str
 		respBodyStr = respBodyStr[:600] + "... [truncated]"
 	}
 	fmt.Println("响应内容:", respBodyStr)
-
+	*/
 	message += "decompiled request complete\n"
 	message += fmt.Sprintf("return code: %d\n", response.StatusCode)
 
@@ -438,7 +440,7 @@ func (s *GetCodeService) getDecompiled(address string, chainId int) (string, str
 		// 打印反编译结果到系统输出
 		fmt.Println("\n=== 反编译结果 ===")
 		if decompiledCode != "" {
-			fmt.Println(decompiledCode)
+			//fmt.Println(decompiledCode)
 		} else {
 			fmt.Println("未找到反编译代码")
 			// 打印部分 HTML 内容以便调试
