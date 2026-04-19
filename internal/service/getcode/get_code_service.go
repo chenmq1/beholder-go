@@ -66,6 +66,14 @@ func (s *GetCodeService) GetCode(address string, chainId int) (int16, error) {
 }
 
 // GetCodeWithProxy 获取合约代码（支持代理链）
+/* 返回值：
+0, error:binary code is null/other error  or neither verified nor decompiled
+1, eoa
+8, smart eoa
+2, verified but not decompiled
+4, not verified but decompiled
+6, verified and decompiled
+*/
 func (s *GetCodeService) GetCodeWithProxy(address string, chainId int, verifiedProxyChain string, code *model.ContractCode) (int16, error) {
 	if code == nil {
 		code = &model.ContractCode{
@@ -135,13 +143,8 @@ func (s *GetCodeService) GetCodeWithProxy(address string, chainId int, verifiedP
 			verifiedGetSuccess = false
 		} else {
 			code.VerifiedStatus = "downloaded"
-			// 压缩验证代码
-			compressedVerifiedCode, err := s.gzipUtils.Compress(checkResult)
-			if err != nil {
-				code.VerifiedCodeCompressed = checkResult
-			} else {
-				code.VerifiedCodeCompressed = string(compressedVerifiedCode)
-			}
+			// 直接设置验证代码，BeforeSave 会自动压缩
+			code.VerifiedCodeDecompressed = checkResult
 			verifiedGetSuccess = true
 		}
 	} else {
@@ -170,13 +173,8 @@ func (s *GetCodeService) GetCodeWithProxy(address string, chainId int, verifiedP
 					// 直接代理地址
 					verifiedProxyChain += proxyInfo.ProxyAddress + ","
 					code.VerifiedProxyChain = verifiedProxyChain
-					// 压缩反编译代码
-					compressedDecompiledCode, err := s.gzipUtils.Compress(decompiledResult)
-					if err != nil {
-						code.DecompiledCodeCompressed = decompiledResult
-					} else {
-						code.DecompiledCodeCompressed = string(compressedDecompiledCode)
-					}
+					// 直接设置反编译代码，BeforeSave 会自动压缩
+					code.DecompiledCodeDecompressed = decompiledResult
 					// 递归获取代理合约代码
 					fmt.Printf("======================decompiled proxy address:%s. chainId:%d. verifiedProxyChain:%s\n", proxyInfo.ProxyAddress, chainId, verifiedProxyChain)
 					return s.GetCodeWithProxy(proxyInfo.ProxyAddress, chainId, verifiedProxyChain, code)
@@ -186,13 +184,8 @@ func (s *GetCodeService) GetCodeWithProxy(address string, chainId int, verifiedP
 					if proxiedAddress != "" {
 						verifiedProxyChain += proxiedAddress + ","
 						code.VerifiedProxyChain = verifiedProxyChain
-						// 压缩反编译代码
-						compressedDecompiledCode, err := s.gzipUtils.Compress(decompiledResult)
-						if err != nil {
-							code.DecompiledCodeCompressed = decompiledResult
-						} else {
-							code.DecompiledCodeCompressed = string(compressedDecompiledCode)
-						}
+						// 直接设置反编译代码，BeforeSave 会自动压缩
+						code.DecompiledCodeDecompressed = decompiledResult
 						// 递归获取代理合约代码
 						fmt.Printf("======================decompiled storage proxy address:%s. chainId:%d. verifiedProxyChain:%s\n", proxiedAddress, chainId, verifiedProxyChain)
 						return s.GetCodeWithProxy(proxiedAddress, chainId, verifiedProxyChain, code)
@@ -201,13 +194,8 @@ func (s *GetCodeService) GetCodeWithProxy(address string, chainId int, verifiedP
 			}
 
 			code.DecompiledStatus = "downloaded"
-			// 压缩反编译代码
-			compressedDecompiledCode, err := s.gzipUtils.Compress(decompiledResult)
-			if err != nil {
-				code.DecompiledCodeCompressed = decompiledResult
-			} else {
-				code.DecompiledCodeCompressed = string(compressedDecompiledCode)
-			}
+			// 直接设置反编译代码，BeforeSave 会自动压缩
+			code.DecompiledCodeDecompressed = decompiledResult
 			decompiledGetSuccess = true
 		} else {
 			code.DecompiledStatus = "failed"

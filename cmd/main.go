@@ -5,7 +5,9 @@ import (
 	"log"
 
 	"github.com/beholder-daemon/config"
+	"github.com/beholder-daemon/internal/controller"
 	"github.com/beholder-daemon/internal/service"
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/spf13/viper"
 )
@@ -60,6 +62,23 @@ func main() {
 
 	// 初始化Gin路由
 	r := gin.Default()
+
+	// 配置 CORS 中间件
+	r.Use(cors.Default())
+
+	// 初始化数据库连接
+	db, _ := config.InitDB()
+
+	// 初始化RabbitMQ发布者
+	publisher, err := service.NewRabbitMQPublisher(rabbitMQConn)
+	if err != nil {
+		log.Fatalf("Failed to initialize RabbitMQ publisher: %v", err)
+	}
+	defer publisher.Close()
+
+	// 注册控制器路由
+	beholderController := controller.NewBeholderController(db, publisher)
+	beholderController.RegisterRoutes(r)
 
 	// 获取服务端口
 	port := viper.GetInt("app.port")

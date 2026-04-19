@@ -10,16 +10,21 @@ import (
 	"github.com/beholder-daemon/config"
 	"github.com/beholder-daemon/internal/service/burnpair"
 	"github.com/beholder-daemon/internal/service/getcode"
+	"github.com/beholder-daemon/internal/service/uniswapcallback"
 	"github.com/beholder-daemon/internal/utils"
 )
 
 // TaskProcessingService 任务处理服务
 type TaskProcessingService struct {
-	db                 *gorm.DB
-	clients            map[string]*ethclient.Client
-	pairCreateService  *burnpair.PairCreateService
-	pairValuateService *burnpair.PairValuateService
-	codeGetService     *burnpair.CodeGetService
+	db                     *gorm.DB
+	clients                map[string]*ethclient.Client
+	pairCreateService      *burnpair.PairCreateService
+	pairValuateService     *burnpair.PairValuateService
+	codeGetService         *burnpair.CodeGetService
+	pairAutocheckService   *burnpair.PairAutocheckService
+	senderAutocheckService *uniswapcallback.SenderAutocheckService
+	threeGetService        *uniswapcallback.ThreeGetService
+	uniswapCodeGetService  *uniswapcallback.UniswapCodeGetService
 }
 
 // NewTaskProcessingService 创建TaskProcessingService实例
@@ -59,12 +64,32 @@ func NewTaskProcessingService() (*TaskProcessingService, error) {
 	// 创建CodeGetService实例
 	codeGetService := burnpair.NewCodeGetService(db, getCodeService)
 
+	// 创建PairAutocheckService实例
+	pairAutocheckService := burnpair.NewPairAutocheckService(db)
+
+	// 创建SenderAutocheckService实例
+	senderAutocheckService := uniswapcallback.NewSenderAutocheckService(db)
+
+	// 创建ThreeGetService实例
+	web3Clients := make(map[string]*utils.Web3Client)
+	for name, client := range clients {
+		web3Clients[name] = utils.NewWeb3Client(context.Background(), client, name)
+	}
+	threeGetService := uniswapcallback.NewThreeGetService(db, web3Clients, utils.NewWeb3Utils())
+
+	// 创建UniswapCodeGetService实例
+	uniswapCodeGetService := uniswapcallback.NewUniswapCodeGetService(db, getCodeService)
+
 	return &TaskProcessingService{
-		db:                 db,
-		clients:            clients,
-		pairCreateService:  pairCreateService,
-		pairValuateService: pairValuateService,
-		codeGetService:     codeGetService,
+		db:                     db,
+		clients:                clients,
+		pairCreateService:      pairCreateService,
+		pairValuateService:     pairValuateService,
+		codeGetService:         codeGetService,
+		pairAutocheckService:   pairAutocheckService,
+		senderAutocheckService: senderAutocheckService,
+		threeGetService:        threeGetService,
+		uniswapCodeGetService:  uniswapCodeGetService,
 	}, nil
 }
 
@@ -86,6 +111,21 @@ func (s *TaskProcessingService) ProcessTask(message map[string]interface{}) {
 					if err := s.codeGetService.ProcessTask(); err != nil {
 						fmt.Printf("处理codeGet任务失败: %v\n", err)
 					}
+				case "autoCheck":
+					s.pairAutocheckService.ProcessTask()
+				default:
+					fmt.Printf("未知任务类型: %s\n", task)
+				}
+			}
+		} else if function == "swapCallback" {
+			if task, ok := message["task"].(string); ok {
+				switch task {
+				case "collect3":
+					s.threeGetService.ProcessTask(message)
+				case "codeGet":
+					s.uniswapCodeGetService.ProcessTask(message)
+				case "autoCheck":
+					s.senderAutocheckService.ProcessTask(message)
 				default:
 					fmt.Printf("未知任务类型: %s\n", task)
 				}

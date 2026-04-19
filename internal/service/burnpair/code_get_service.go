@@ -72,8 +72,8 @@ func (s *CodeGetService) ProcessTask() error {
 		// 如果成功获取代码
 		if result > 0 {
 			pair.CodeGot = 1
-			// 设置检查状态为代码已获取（假设 CHECK_STATE_CODEGOT = 11）
-			checkState := 11
+			// 设置检查状态为代码已获取
+			checkState := CHECK_STATE_CODEGOT
 			pair.CheckState = &checkState
 			gotCount++
 		}

@@ -1,9 +1,11 @@
-package uniswapcallback// ThreeSender ThreeSender实体
+package uniswapcallback
+
+// ThreeSender ThreeSender实体
 type ThreeSender struct {
-	ChainID     int16  `gorm:"column:chain_id;not null" json:"chain_id"`
+	ChainID     int16  `gorm:"column:chain_id;not null" json:"chainId"`
 	Address     string `gorm:"primary_key;column:address;type:varchar(66)" json:"address"`
-	CodeGot     int16  `gorm:"column:code_got" json:"code_got"`
-	HasCallback int16  `gorm:"column:has_callback" json:"has_callback"`
+	CodeGot     int16  `gorm:"column:code_got" json:"codeGot"`
+	HasCallback int16  `gorm:"column:has_callback" json:"hasCallback"`
 	Status      int    `gorm:"column:status" json:"status"`
 }
 
