@@ -164,7 +164,7 @@ func (s *ThreeGetService) ProcessTask(message map[string]interface{}) {
 	endBlock := uint64(blockNumber)
 	startBlock := uint64(0)
 
-	if eb, ok := message["endBlock"].(float64); ok {
+	if eb, ok := message["endBlock"].(float64); ok && eb != 0 {
 		endBlock = uint64(eb)
 	}
 	if sb, ok := message["startBlock"].(float64); ok {
@@ -224,13 +224,13 @@ func (s *ThreeGetService) ProcessTask(message map[string]interface{}) {
 	wg.Wait()
 
 	sendersLogged := len(allSenders)
-	log.Printf("total: %d, uniqued: %d", 0, sendersLogged)
+	log.Printf("total senders: %d", sendersLogged)
 
 	sendersInserted := s.batchInsertIgnore(allSenders, chainId)
 
 	record.Status = 0
 	record.EndTime = time.Now()
-	record.Message = fmt.Sprintf("created %d/%d/%d", 0, sendersLogged, sendersInserted)
+	record.Message = fmt.Sprintf("created %d/%d", sendersLogged, sendersInserted)
 
 	if err := s.swapCallbackTaskRepo.Update(record); err != nil {
 		log.Printf("更新任务状态失败: %v", err)

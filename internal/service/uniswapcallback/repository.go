@@ -63,8 +63,17 @@ func (r *ThreeSenderRepository) FindSenderToGetCode(chainId int16) ([]*uniswapca
 
 func (r *ThreeSenderRepository) SaveAll(senders []*uniswapcallback.ThreeSender) error {
 	for _, sender := range senders {
-		if err := r.db.Model(sender).Update("code_got", sender.CodeGot).Error; err != nil {
-			return err
+		updates := make(map[string]interface{})
+		if sender.CodeGot != 0 {
+			updates["code_got"] = sender.CodeGot
+		}
+		if sender.Status != 0 {
+			updates["status"] = sender.Status
+		}
+		if len(updates) > 0 {
+			if err := r.db.Model(sender).Updates(updates).Error; err != nil {
+				return err
+			}
 		}
 	}
 	return nil
