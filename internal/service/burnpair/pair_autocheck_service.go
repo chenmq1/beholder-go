@@ -58,7 +58,7 @@ func (s *PairAutocheckService) ProcessTask() {
 	burn := 0
 
 	for _, pair := range pairs {
-		code, err := s.contractCodeRepo.FindByAddress(pair.TokenAddress)
+		code, err := s.contractCodeRepo.FindByAddress(pair.TokenAddress, 2)
 		if err != nil || code == nil {
 			checkState := CHECK_STATE_AUTOCHECKED_FAIL
 			pair.CheckState = &checkState
@@ -119,9 +119,9 @@ func NewContractCodeRepository(db *gorm.DB) *ContractCodeRepository {
 	return &ContractCodeRepository{db: db}
 }
 
-func (r *ContractCodeRepository) FindByAddress(address string) (*model.ContractCode, error) {
+func (r *ContractCodeRepository) FindByAddress(address string, chainId int16) (*model.ContractCode, error) {
 	var code model.ContractCode
-	err := r.db.First(&code, "address = ?", address).Error
+	err := r.db.First(&code, "address = ? AND chain_id = ?", address, chainId).Error
 	if err != nil {
 		return nil, err
 	}

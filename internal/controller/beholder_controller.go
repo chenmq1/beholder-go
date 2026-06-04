@@ -268,9 +268,15 @@ func (c *BeholderController) getSendersTasksPaged(ctx *gin.Context) {
 // getCodeByToken 根据token_address查询Code
 func (c *BeholderController) getCodeByToken(ctx *gin.Context) {
 	tokenAddress := ctx.Param("tokenAddress")
+	chainIdStr := ctx.DefaultQuery("chainId", "1")
+	chainId, err := strconv.Atoi(chainIdStr)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "无效的 chainId"})
+		return
+	}
 
 	var code model.ContractCode
-	err := c.db.Where("address = ?", tokenAddress).First(&code).Error
+	err = c.db.Where("address = ? AND chain_id = ?", tokenAddress, chainId).First(&code).Error
 	if err != nil {
 		ctx.Status(http.StatusNotFound)
 		return

@@ -17,6 +17,11 @@ const (
 	CHECK_STATE_AUTOCHECKED_FAIL   = 299
 )
 
+var callbackSignatures = map[string]string{
+	"uniswapV3SwapCallback": "fa461e33",
+	"pancakeV3SwapCallback": "23a69e75",
+}
+
 type SenderAutocheckService struct {
 	db                      *gorm.DB
 	swapCallbackTaskRepo    *SwapCallbackTaskRepository
@@ -52,6 +57,11 @@ func (s *SenderAutocheckService) ProcessTask(message map[string]interface{}) {
 	chainId := int(chainIdInterface.(float64))
 	record.ChainID = int16(chainId)
 
+	callbackKey := "uniswapV3SwapCallback"
+	if keyInterface, ok := message["callbackKey"]; ok && keyInterface != nil {
+		callbackKey = fmt.Sprintf("%v", keyInterface)
+	}
+
 	if err := s.swapCallbackTaskRepo.Create(record); err != nil {
 		log.Printf("创建任务记录失败: %v", err)
 		return
@@ -75,7 +85,7 @@ func (s *SenderAutocheckService) ProcessTask(message map[string]interface{}) {
 	burn := 0
 
 	for _, sender := range senders {
-		code, err := s.contractCodeRepo.FindByAddress(sender.Address)
+		code, err := s.contractCodeRepo.FindByAddress(sender.Address, record.ChainID)
 		if err != nil || code == nil {
 			sender.Status = CHECK_STATE_AUTOCHECKED_FAIL
 			fail++
@@ -88,10 +98,7 @@ func (s *SenderAutocheckService) ProcessTask(message map[string]interface{}) {
 		if (verifiedCode == "" || verifiedCode == "0x") && (decompiledCode == "" || decompiledCode == "0x") {
 			sender.Status = CHECK_STATE_AUTOCHECKED_FAIL
 			fail++
-		} else if s.searchInCode(verifiedCode, "uniswapV3SwapCallback") || s.searchInCode(decompiledCode, "uniswapV3SwapCallback") ||
-			s.searchInCode(verifiedCode, "fa461e33") || s.searchInCode(decompiledCode, "fa461e33") ||
-			(chainId == 2 && (s.searchInCode(verifiedCode, "pancakeV3SwapCallback") || s.searchInCode(decompiledCode, "pancakeV3SwapCallback") ||
-				s.searchInCode(verifiedCode, "23a69e75") || s.searchInCode(decompiledCode, "23a69e75"))) {
+		} else if s.searchCallbackSignature(verifiedCode, decompiledCode, callbackKey) {
 			sender.Status = CHECK_STATE_AUTOCHECKED_BURN
 			burn++
 		} else {
@@ -127,6 +134,27 @@ func (s *SenderAutocheckService) searchInCode(codeContent string, keyword string
 	return strings.Contains(codeContent, keyword)
 }
 
+func (s *SenderAutocheckService) searchCallbackSignature(verifiedCode, decompiledCode, key string) bool {
+	value, ok := callbackSignatures[key]
+	if !ok {
+		return false
+	}
+
+	if verifiedCode != "" && verifiedCode != "0x" {
+		if s.searchInCode(verifiedCode, key) {
+			return true
+		}
+	}
+
+	if decompiledCode != "" && decompiledCode != "0x" {
+		if s.searchInCode(decompiledCode, key) || s.searchInCode(decompiledCode, value) {
+			return true
+		}
+	}
+
+	return false
+}
+
 type ContractCodeRepositoryForCallback struct {
 	db *gorm.DB
 }
@@ -135,9 +163,9 @@ func NewContractCodeRepositoryForCallback(db *gorm.DB) *ContractCodeRepositoryFo
 	return &ContractCodeRepositoryForCallback{db: db}
 }
 
-func (r *ContractCodeRepositoryForCallback) FindByAddress(address string) (*model.ContractCode, error) {
+func (r *ContractCodeRepositoryForCallback) FindByAddress(address string, chainId int16) (*model.ContractCode, error) {
 	var code model.ContractCode
-	err := r.db.First(&code, "address = ?", address).Error
+	err := r.db.First(&code, "address = ? AND chain_id = ?", address, chainId).Error
 	if err != nil {
 		return nil, err
 	}

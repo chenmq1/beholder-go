@@ -78,6 +78,7 @@ func (s *GetCodeService) GetCodeWithProxy(address string, chainId int, verifiedP
 	if code == nil {
 		code = &model.ContractCode{
 			Address: address,
+			ChainID: int16(chainId),
 		}
 	}
 
