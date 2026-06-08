@@ -69,7 +69,7 @@ func (s *GetCodeService) GetCode(address string, chainId int) (int16, error) {
 /* 返回值：
 0, error:binary code is null/other error  or neither verified nor decompiled
 1, eoa
-8, smart eoa
+8, smart eoa  // abandonned. smartEoa situation should get the delegate contract code, and return its own result code.
 2, verified but not decompiled
 4, not verified but decompiled
 6, verified and decompiled
@@ -106,7 +106,7 @@ func (s *GetCodeService) GetCodeWithProxy(address string, chainId int, verifiedP
 		if err := s.db.Save(code).Error; err != nil {
 			return 0, err
 		}
-		return 8, nil
+		return s.GetCodeWithProxy(smartEoaAddress, chainId, verifiedProxyChain, code)
 	} else {
 		// 压缩二进制代码
 		compressedBinaryCode, err := s.gzipUtils.Compress(binary)

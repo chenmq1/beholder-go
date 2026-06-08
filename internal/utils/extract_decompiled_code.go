@@ -10,10 +10,6 @@ import (
 	"github.com/jinzhu/gorm"
 )
 
-const (
-	CHECK_STATE_AUTOCHECKED_BURN = 202
-)
-
 type ExtractDecompiledCode struct {
 	db *gorm.DB
 }
@@ -26,7 +22,7 @@ func (e *ExtractDecompiledCode) GetThreeSenderRecheckByChainId(chainId int16) er
 	var codes []model.ContractCode
 
 	err := e.db.Joins("JOIN three_sender ON three_sender.address = contract_code.address").
-		Where("three_sender.status = ? AND three_sender.chain_id = ?", CHECK_STATE_AUTOCHECKED_BURN, chainId).
+		Where("three_sender.status = ? AND three_sender.chain_id = ?", CHECK_STATE_AUTOCHECKED_POSITIVE, chainId).
 		Find(&codes).Error
 
 	if err != nil {

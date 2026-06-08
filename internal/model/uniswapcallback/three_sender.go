@@ -7,6 +7,7 @@ type ThreeSender struct {
 	CodeGot     int16  `gorm:"column:code_got" json:"codeGot"`
 	HasCallback int16  `gorm:"column:has_callback" json:"hasCallback"`
 	Status      int    `gorm:"column:status" json:"status"`
+	CallbackKey string `gorm:"column:callback_key;type:varchar(100)" json:"callbackKey"`
 }
 
 // TableName 设置表名

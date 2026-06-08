@@ -8,19 +8,11 @@ import (
 
 	"github.com/beholder-daemon/internal/model"
 	"github.com/beholder-daemon/internal/model/uniswapcallback"
+	"github.com/beholder-daemon/internal/utils"
 	"github.com/jinzhu/gorm"
 )
 
-const (
-	CHECK_STATE_AUTOCHECKED_NOBURN = 201
-	CHECK_STATE_AUTOCHECKED_BURN   = 202
-	CHECK_STATE_AUTOCHECKED_FAIL   = 299
-)
-
-var callbackSignatures = map[string]string{
-	"uniswapV3SwapCallback": "fa461e33",
-	"pancakeV3SwapCallback": "23a69e75",
-}
+const minDecompileCodeLines = 100
 
 type SenderAutocheckService struct {
 	db                      *gorm.DB
@@ -61,6 +53,7 @@ func (s *SenderAutocheckService) ProcessTask(message map[string]interface{}) {
 	if keyInterface, ok := message["callbackKey"]; ok && keyInterface != nil {
 		callbackKey = fmt.Sprintf("%v", keyInterface)
 	}
+	record.CallbackKey = callbackKey
 
 	if err := s.swapCallbackTaskRepo.Create(record); err != nil {
 		log.Printf("创建任务记录失败: %v", err)
@@ -69,7 +62,7 @@ func (s *SenderAutocheckService) ProcessTask(message map[string]interface{}) {
 
 	log.Println("处理senderAutoCheck任务:")
 
-	senders, err := s.threeSenderRepo.FindByCodeGotGreaterThanAndChainIdAndStatusIsNull(1, int16(chainId))
+	senders, err := s.threeSenderRepo.FindByCodeGotGreaterThanAndChainIdAndStatusIsNullAndCallbackKey(1, int16(chainId), callbackKey)// 1 means > 1, 既不是未成功下载：0，也不是eoa：1
 	if err != nil {
 		log.Printf("获取待检查发送者失败: %v", err)
 		record.Status = -1
@@ -87,7 +80,7 @@ func (s *SenderAutocheckService) ProcessTask(message map[string]interface{}) {
 	for _, sender := range senders {
 		code, err := s.contractCodeRepo.FindByAddress(sender.Address, record.ChainID)
 		if err != nil || code == nil {
-			sender.Status = CHECK_STATE_AUTOCHECKED_FAIL
+			sender.Status = utils.CHECK_STATE_AUTOCHECKED_FAIL
 			fail++
 			continue
 		}
@@ -95,15 +88,51 @@ func (s *SenderAutocheckService) ProcessTask(message map[string]interface{}) {
 		verifiedCode := code.VerifiedCodeDecompressed
 		decompiledCode := code.DecompiledCodeDecompressed
 
-		if (verifiedCode == "" || verifiedCode == "0x") && (decompiledCode == "" || decompiledCode == "0x") {
-			sender.Status = CHECK_STATE_AUTOCHECKED_FAIL
+		// 步骤1: 如果 有验证代码，直接根据验证代码来
+		if verifiedCode != "" && verifiedCode != "0x" {
+			if s.searchCallbackSignature(verifiedCode, "", callbackKey) {
+				sender.Status = utils.CHECK_STATE_AUTOCHECKED_POSITIVE
+				burn++
+			} else {
+				sender.Status = utils.CHECK_STATE_AUTOCHECKED_NEGATIVE
+				noburn++
+			}
+			continue
+		}
+
+		// 步骤2: verifiedCode 无效，反编译也没有，那就失败了
+		if decompiledCode == "" || decompiledCode == "0x" {
+			sender.Status = utils.CHECK_STATE_AUTOCHECKED_FAIL
 			fail++
-		} else if s.searchCallbackSignature(verifiedCode, decompiledCode, callbackKey) {
-			sender.Status = CHECK_STATE_AUTOCHECKED_BURN
-			burn++
-		} else {
-			sender.Status = CHECK_STATE_AUTOCHECKED_NOBURN
+			continue
+		}
+
+		// 步骤3: 检查 decompiledCode 的行数是否达到最小要求，太少也证明反编译代码失效
+		decompileLineCount := strings.Count(decompiledCode, "\n") + 1
+		if decompileLineCount < minDecompileCodeLines {
+			sender.Status = utils.CHECK_STATE_AUTOCHECKED_FAIL
+			fail++
+			continue
+		}
+
+		// 步骤4: 使用 decompiledCode 进行检查
+		if !s.searchCallbackSignature("", decompiledCode, callbackKey) {
+			sender.Status = utils.CHECK_STATE_AUTOCHECKED_NEGATIVE
 			noburn++
+			continue
+		}
+
+		// 步骤5: 签名检查通过，进一步验证是否存在实际的函数定义
+		sig, ok := callbackSignatures[callbackKey]
+		if !ok {
+			sender.Status = utils.CHECK_STATE_AUTOCHECKED_FAIL
+			fail++
+		} else if !s.hasFunctionDefinition(decompiledCode, sig.FunctionName, sig.Selector) {
+			sender.Status = utils.CHECK_STATE_AUTOCHECKED_FAIL
+			fail++
+		} else {
+			sender.Status = utils.CHECK_STATE_AUTOCHECKED_POSITIVE
+			burn++
 		}
 	}
 
@@ -135,24 +164,32 @@ func (s *SenderAutocheckService) searchInCode(codeContent string, keyword string
 }
 
 func (s *SenderAutocheckService) searchCallbackSignature(verifiedCode, decompiledCode, key string) bool {
-	value, ok := callbackSignatures[key]
+	sig, ok := callbackSignatures[key]
 	if !ok {
 		return false
 	}
 
 	if verifiedCode != "" && verifiedCode != "0x" {
-		if s.searchInCode(verifiedCode, key) {
+		if s.searchInCode(verifiedCode, sig.FunctionName) {
 			return true
+		} else{
+			return false
 		}
 	}
 
 	if decompiledCode != "" && decompiledCode != "0x" {
-		if s.searchInCode(decompiledCode, key) || s.searchInCode(decompiledCode, value) {
+		if s.searchInCode(decompiledCode, sig.FunctionName) || s.searchInCode(decompiledCode, sig.Selector) {
 			return true
 		}
 	}
 
 	return false
+}
+
+func (s *SenderAutocheckService) hasFunctionDefinition(code string, functionName string, functionSelector string) bool {
+	functionNamePattern := "function " + functionName + "("
+	functionSelectorPattern := "function 0x" + functionSelector + "("
+	return strings.Contains(code, functionNamePattern) || strings.Contains(code, functionSelectorPattern)
 }
 
 type ContractCodeRepositoryForCallback struct {

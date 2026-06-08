@@ -55,9 +55,21 @@ func (r *ThreeSenderRepository) FindByCodeGotGreaterThanAndChainIdAndStatusIsNul
 	return senders, err
 }
 
+func (r *ThreeSenderRepository) FindByCodeGotGreaterThanAndChainIdAndStatusIsNullAndCallbackKey(codeGot int16, chainId int16, callbackKey string) ([]*uniswapcallback.ThreeSender, error) {
+	var senders []*uniswapcallback.ThreeSender
+	err := r.db.Where("code_got > ? AND chain_id = ? AND status IS NULL AND callback_key = ?", codeGot, chainId, callbackKey).Find(&senders).Error
+	return senders, err
+}
+
 func (r *ThreeSenderRepository) FindSenderToGetCode(chainId int16) ([]*uniswapcallback.ThreeSender, error) {
 	var senders []*uniswapcallback.ThreeSender
 	err := r.db.Where("code_got IS NULL AND chain_id = ?", chainId).Find(&senders).Error
+	return senders, err
+}
+
+func (r *ThreeSenderRepository) FindSenderToGetCodeByCallbackKey(chainId int16, callbackKey string) ([]*uniswapcallback.ThreeSender, error) {
+	var senders []*uniswapcallback.ThreeSender
+	err := r.db.Where("code_got IS NULL AND chain_id = ? AND callback_key = ?", chainId, callbackKey).Find(&senders).Error
 	return senders, err
 }
 

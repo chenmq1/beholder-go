@@ -117,7 +117,7 @@ func (s *PairValuateSubService) ProcessSubTask(pair *burnpair.UniswapPair) int {
 	pair.ValueState = valueState
 	pair.ValueInUsd = int(currencyAmount)
 	if valueState == 1 && (pair.CheckState == nil || *pair.CheckState == 0) {
-		checkState := CHECK_STATE_WAITING_CHECK
+		checkState := utils.CHECK_STATE_WAITING_CHECK
 		pair.CheckState = &checkState
 	}
 
@@ -236,7 +236,7 @@ func (p *SyncEventProcessor) ProcessEvents(logs []types.Log, original ethereum.F
 		pair.ValueState = valueState
 		pair.ValueInUsd = int(currencyAmountFloat64)
 		if valueState == 1 && (pair.CheckState == nil || *pair.CheckState == 0) {
-			checkState := CHECK_STATE_WAITING_CHECK
+			checkState := utils.CHECK_STATE_WAITING_CHECK
 			pair.CheckState = &checkState
 		}
 

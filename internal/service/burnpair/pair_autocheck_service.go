@@ -8,6 +8,7 @@ import (
 
 	"github.com/beholder-daemon/internal/model"
 	"github.com/beholder-daemon/internal/model/burnpair"
+	"github.com/beholder-daemon/internal/utils"
 	"github.com/jinzhu/gorm"
 )
 
@@ -42,7 +43,7 @@ func (s *PairAutocheckService) ProcessTask() {
 
 	log.Println("处理pairAutocheck任务:")
 
-	pairs, err := s.uniswapV2PairRepo.FindByCheckState(CHECK_STATE_CODEGOT)
+	pairs, err := s.uniswapV2PairRepo.FindByCheckState(utils.CHECK_STATE_CODEGOT)
 	if err != nil {
 		log.Printf("获取待检查交易对失败: %v", err)
 		record.Status = -1
@@ -60,7 +61,7 @@ func (s *PairAutocheckService) ProcessTask() {
 	for _, pair := range pairs {
 		code, err := s.contractCodeRepo.FindByAddress(pair.TokenAddress, 2)
 		if err != nil || code == nil {
-			checkState := CHECK_STATE_AUTOCHECKED_FAIL
+			checkState := utils.CHECK_STATE_AUTOCHECKED_FAIL
 			pair.CheckState = &checkState
 			fail++
 			continue
@@ -70,15 +71,15 @@ func (s *PairAutocheckService) ProcessTask() {
 		decompiledCode := code.DecompiledCodeDecompressed
 
 		if (verifiedCode == "" || verifiedCode == "0x") && (decompiledCode == "" || decompiledCode == "0x") {
-			checkState := CHECK_STATE_AUTOCHECKED_FAIL
+			checkState := utils.CHECK_STATE_AUTOCHECKED_FAIL
 			pair.CheckState = &checkState
 			fail++
 		} else if s.searchInCode(verifiedCode, ".sync") || s.searchInCode(decompiledCode, ".sync") {
-			checkState := CHECK_STATE_AUTOCHECKED_BURN
+			checkState := utils.CHECK_STATE_AUTOCHECKED_POSITIVE
 			pair.CheckState = &checkState
 			burn++
 		} else {
-			checkState := CHECK_STATE_AUTOCHECKED_NOBURN
+			checkState := utils.CHECK_STATE_AUTOCHECKED_NEGATIVE
 			pair.CheckState = &checkState
 			noburn++
 		}

@@ -42,6 +42,13 @@ func (s *UniswapCodeGetService) ProcessTask(message map[string]interface{}) {
 	}
 	chainId := int(chainIdInterface.(float64))
 	record.ChainID = int16(chainId)
+
+	callbackKey := "uniswapV3SwapCallback"
+	if keyInterface, ok := message["callbackKey"]; ok && keyInterface != nil {
+		callbackKey = fmt.Sprintf("%v", keyInterface)
+	}
+	record.CallbackKey = callbackKey
+
 	record.Status = 1
 	record.StartTime = time.Now()
 
@@ -52,7 +59,7 @@ func (s *UniswapCodeGetService) ProcessTask(message map[string]interface{}) {
 
 	log.Println("处理codeGet任务:")
 
-	senders, err := s.threeSenderRepo.FindSenderToGetCode(int16(chainId))
+	senders, err := s.threeSenderRepo.FindSenderToGetCodeByCallbackKey(int16(chainId), callbackKey)
 	if err != nil {
 		log.Printf("获取待获取代码的发送者失败: %v", err)
 		record.Status = -1

@@ -17,10 +17,7 @@ import (
 	"github.com/jinzhu/gorm"
 )
 
-const (
-	MAX_BLOCK_PER_TASK = 120000
-	SYNC_EVENT_TOPIC    = "0x19b47279256b2a23a1665c810c8d55a1758940ee09377d4f8d26497a3577dc83"
-)
+const MAX_BLOCK_PER_TASK = 120000
 
 type ThreeGetSubService struct {
 	db        *gorm.DB
@@ -36,7 +33,7 @@ func NewThreeGetSubService(db *gorm.DB, clients map[string]*utils.Web3Client, we
 	}
 }
 
-func (s *ThreeGetSubService) processSubTask(chainId int, fromBlock, toBlock int64) (map[string]bool, error) {
+func (s *ThreeGetSubService) processSubTask(chainId int, fromBlock, toBlock int64, topic string) (map[string]bool, error) {
 	client := s.getClientByChainId(chainId)
 	if client == nil {
 		return nil, fmt.Errorf("找不到 chainId %d 的客户端", chainId)
@@ -48,7 +45,7 @@ func (s *ThreeGetSubService) processSubTask(chainId int, fromBlock, toBlock int6
 	filter := ethereum.FilterQuery{
 		FromBlock: big.NewInt(fromBlock),
 		ToBlock:   big.NewInt(toBlock),
-		Topics:    [][]common.Hash{{common.HexToHash(SYNC_EVENT_TOPIC)}},
+		Topics:    [][]common.Hash{{common.HexToHash(topic)}},
 	}
 
 	err := s.web3Utils.StepBackwardGetLogWithDefaultStep(
@@ -143,6 +140,12 @@ func (s *ThreeGetService) ProcessTask(message map[string]interface{}) {
 	chainId := int(chainIdInterface.(float64))
 	record.ChainID = int16(chainId)
 
+	callbackKey := "uniswapV3SwapCallback"
+	if keyInterface, ok := message["callbackKey"]; ok && keyInterface != nil {
+		callbackKey = fmt.Sprintf("%v", keyInterface)
+	}
+	record.CallbackKey = callbackKey
+
 	client := s.threeGetSubService.getClientByChainId(chainId)
 	if client == nil {
 		log.Printf("找不到 chainId %d 的客户端", chainId)
@@ -192,6 +195,15 @@ func (s *ThreeGetService) ProcessTask(message map[string]interface{}) {
 		return
 	}
 
+	sig, ok := callbackSignatures[callbackKey]
+	if !ok || sig.Topic == "" {
+		log.Printf("找不到有效的 callbackKey: %s 或 topic 为空", callbackKey)
+		record.Status = -1
+		record.Message = fmt.Sprintf("找不到有效的 callbackKey: %s 或 topic 为空", callbackKey)
+		s.swapCallbackTaskRepo.Update(record)
+		return
+	}
+
 	log.Printf("处理threeGet任务: chainId=%d, startBlock=%d, endBlock=%d", chainId, startBlock, endBlock)
 
 	segmentSize := uint64(MAX_BLOCK_PER_TASK / 18)
@@ -199,6 +211,7 @@ func (s *ThreeGetService) ProcessTask(message map[string]interface{}) {
 	var mu sync.Mutex
 	allSenders := make(map[string]bool)
 
+	topic := sig.Topic
 	for segStart := startBlock; segStart < endBlock; segStart += segmentSize {
 		segEnd := segStart + segmentSize
 		if segEnd > endBlock {
@@ -208,7 +221,7 @@ func (s *ThreeGetService) ProcessTask(message map[string]interface{}) {
 		wg.Add(1)
 		go func(segStart, segEnd uint64) {
 			defer wg.Done()
-			result, err := s.threeGetSubService.processSubTask(chainId, int64(segStart), int64(segEnd))
+			result, err := s.threeGetSubService.processSubTask(chainId, int64(segStart), int64(segEnd), topic)
 			if err != nil {
 				log.Printf("处理子任务失败: %v", err)
 				return
@@ -226,7 +239,7 @@ func (s *ThreeGetService) ProcessTask(message map[string]interface{}) {
 	sendersLogged := len(allSenders)
 	log.Printf("total senders: %d", sendersLogged)
 
-	sendersInserted := s.batchInsertIgnore(allSenders, chainId)
+	sendersInserted := s.batchInsertIgnore(allSenders, chainId, callbackKey)
 
 	record.Status = 0
 	record.EndTime = time.Now()
@@ -239,17 +252,19 @@ func (s *ThreeGetService) ProcessTask(message map[string]interface{}) {
 	log.Printf("threeGet任务处理完成: %s", record.Message)
 }
 
-func (s *ThreeGetService) batchInsertIgnore(senders map[string]bool, chainId int) int {
+func (s *ThreeGetService) batchInsertIgnore(senders map[string]bool, chainId int, callbackKey string) int {
 	type sender struct {
-		address string
-		chainId int
+		address     string
+		chainId     int
+		callbackKey string
 	}
 
 	var toInsert []sender
 	for addr := range senders {
 		toInsert = append(toInsert, sender{
-			address: "0x" + addr,
-			chainId: chainId,
+			address:     "0x" + addr,
+			chainId:     chainId,
+			callbackKey: callbackKey,
 		})
 	}
 
@@ -259,7 +274,7 @@ func (s *ThreeGetService) batchInsertIgnore(senders map[string]bool, chainId int
 
 	inserted := 0
 	for _, t := range toInsert {
-		err := s.db.Exec("INSERT IGNORE INTO three_sender (address, chain_id) VALUES (?, ?)", t.address, t.chainId).Error
+		err := s.db.Exec("INSERT IGNORE INTO three_sender (address, chain_id, callback_key) VALUES (?, ?, ?)", t.address, t.chainId, t.callbackKey).Error
 		if err == nil {
 			inserted++
 		}

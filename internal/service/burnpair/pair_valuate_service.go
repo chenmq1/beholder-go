@@ -12,24 +12,6 @@ import (
 	"github.com/beholder-daemon/internal/utils"
 )
 
-const (
-	CHECK_STATE_NOBURN             = 0
-	CHECK_STATE_SAFEBURN           = 1
-	CHECK_STATE_REBASE             = 2
-	CHECK_STATE_DEPENDBURN_1       = 11
-	CHECK_STATE_DEPENDBURN_2       = 12
-	CHECK_STATE_DEPENDBURN_3       = 13
-	CHECK_STATE_UNSAFEBURN         = 99
-	CHECK_STATE_WAITING_CHECK      = 100
-	CHECK_STATE_CODEGOT            = 101
-	CHECK_STATE_AUTOCHECKED_NOBURN = 201
-	CHECK_STATE_AUTOCHECKED_BURN   = 202
-	CHECK_STATE_AUTOCHECKED_FAIL   = 299
-
-	EXPIRE_INACTIVE_BLOCK = 1344000 // 7 days
-	MAX_CONTRACT_QUERY    = 49
-)
-
 type PairValuateService struct {
 	db                 *gorm.DB
 	bscClient          *utils.Web3Client
@@ -83,8 +65,8 @@ func (s *PairValuateService) ProcessTask(message map[string]interface{}) {
 	}
 
 	// 过期不活跃的交易对
-	inactiveBlock := latestBlock - EXPIRE_INACTIVE_BLOCK
-	result := s.db.Model(&burnpair.UniswapPair{}).Where("deleted=0 AND ((pair_create_block<? AND check_state IS NULL) OR check_state < ?)", inactiveBlock, CHECK_STATE_DEPENDBURN_1).Update("deleted", 1)
+	inactiveBlock := latestBlock - utils.EXPIRE_INACTIVE_BLOCK
+	result := s.db.Model(&burnpair.UniswapPair{}).Where("deleted=0 AND ((pair_create_block<? AND check_state IS NULL) OR check_state < ?)", inactiveBlock, utils.CHECK_STATE_DEPENDBURN_1).Update("deleted", 1)
 	deactivated := int(result.RowsAffected)
 	log.Printf("过期不活跃交易对数量: %d", deactivated)
 
@@ -157,9 +139,9 @@ func (s *PairValuateService) ProcessTask(message map[string]interface{}) {
 		// 限制协程数目：最多20个协程同时运行
 		semaphore := make(chan struct{}, 20)
 
-		for i := 0; i < len(pairs); i += MAX_CONTRACT_QUERY {
+		for i := 0; i < len(pairs); i += utils.MAX_CONTRACT_QUERY {
 			wg.Add(1)
-			end := i + MAX_CONTRACT_QUERY
+			end := i + utils.MAX_CONTRACT_QUERY
 			if end > len(pairs) {
 				end = len(pairs)
 			}

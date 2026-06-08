@@ -7,6 +7,7 @@ import (
 
 	"github.com/beholder-daemon/internal/model/burnpair"
 	"github.com/beholder-daemon/internal/service/getcode"
+	"github.com/beholder-daemon/internal/utils"
 	"github.com/jinzhu/gorm"
 )
 
@@ -73,7 +74,7 @@ func (s *CodeGetService) ProcessTask() error {
 		if result > 0 {
 			pair.CodeGot = 1
 			// 设置检查状态为代码已获取
-			checkState := CHECK_STATE_CODEGOT
+			checkState := utils.CHECK_STATE_CODEGOT
 			pair.CheckState = &checkState
 			gotCount++
 		}
