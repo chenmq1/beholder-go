@@ -168,6 +168,7 @@ func (c *BeholderController) getSendersPaged(ctx *gin.Context) {
 	size, _ := strconv.Atoi(ctx.DefaultQuery("size", "200"))
 	status, _ := strconv.Atoi(ctx.DefaultQuery("status", "-1"))
 	chainId, _ := strconv.Atoi(ctx.DefaultQuery("chainId", "1"))
+	callbackKey := ctx.DefaultQuery("callbackKey", "")
 
 	offset := page * size
 
@@ -175,6 +176,10 @@ func (c *BeholderController) getSendersPaged(ctx *gin.Context) {
 	var total int64
 
 	query := c.db.Model(&uniswapcallback.ThreeSender{}).Where("code_got > ? AND chain_id = ?", 1, chainId)
+
+	if callbackKey != "" {
+		query = query.Where("callback_key = ?", callbackKey)
+	}
 
 	if status != -1 {
 		query = query.Where("status = ?", status)
@@ -209,6 +214,7 @@ func (c *BeholderController) getSendersTasksPaged(ctx *gin.Context) {
 	size, _ := strconv.Atoi(ctx.DefaultQuery("size", "20"))
 	status, _ := strconv.Atoi(ctx.DefaultQuery("status", "-100"))
 	chainId, _ := strconv.Atoi(ctx.DefaultQuery("chainId", "1"))
+	callbackKey := ctx.DefaultQuery("callbackKey", "")
 	sortBy := ctx.DefaultQuery("sortBy", "startTime")
 	direction := ctx.DefaultQuery("direction", "desc")
 
@@ -229,6 +235,10 @@ func (c *BeholderController) getSendersTasksPaged(ctx *gin.Context) {
 
 	// 根据状态和链 ID 查询任务
 	query := c.db.Model(&uniswapcallback.SwapCallbackTask{}).Where("chain_id = ?", chainId)
+
+	if callbackKey != "" {
+		query = query.Where("callback_key = ?", callbackKey)
+	}
 
 	if status != -100 {
 		query = query.Where("status = ?", status)
@@ -310,9 +320,15 @@ func (c *BeholderController) updateSenderStatus(ctx *gin.Context) {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": "status参数无效"})
 		return
 	}
+	chainId, _ := strconv.Atoi(ctx.DefaultQuery("chainId", "1"))
+	callbackKey := ctx.DefaultQuery("callbackKey", "")
 
 	var sender uniswapcallback.ThreeSender
-	result := c.db.First(&sender, "address = ?", address)
+	query := c.db.Where("address = ? AND chain_id = ?", address, chainId)
+	if callbackKey != "" {
+		query = query.Where("callback_key = ?", callbackKey)
+	}
+	result := query.First(&sender)
 	if result.Error != nil {
 		ctx.Status(http.StatusNotFound)
 		return
@@ -332,9 +348,14 @@ func (c *BeholderController) sendSendersTask(ctx *gin.Context) {
 		return
 	}
 
-	chainId, _ := strconv.Atoi(ctx.DefaultQuery("chainId", "1"))
+	params := make(map[string]interface{})
+	for k, v := range ctx.Request.URL.Query() {
+		if len(v) > 0 {
+			params[k] = v[0]
+		}
+	}
 
-	err = c.publisher.SendTaskMessageWithChainId(taskId, chainId)
+	err = c.publisher.SendTaskMessageWithParams(taskId, params)
 	if err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return

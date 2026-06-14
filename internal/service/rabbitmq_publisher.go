@@ -88,7 +88,7 @@ func (p *RabbitMQPublisher) SendTaskMessage(taskId int) error {
 	return p.Publish(message)
 }
 
-func (p *RabbitMQPublisher) SendTaskMessageWithChainId(taskId int, chainId int) error {
+func (p *RabbitMQPublisher) SendTaskMessageWithParams(taskId int, params map[string]interface{}) error {
 	message, ok := taskMessages[taskId]
 	if !ok {
 		return fmt.Errorf("无效的任务ID: %d", taskId)
@@ -98,7 +98,9 @@ func (p *RabbitMQPublisher) SendTaskMessageWithChainId(taskId int, chainId int) 
 	for k, v := range message {
 		msgCopy[k] = v
 	}
-	msgCopy["chainId"] = chainId
+	for k, v := range params {
+		msgCopy[k] = v
+	}
 
 	return p.Publish(msgCopy)
 }

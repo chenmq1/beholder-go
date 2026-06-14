@@ -32,9 +32,9 @@ func (r *SwapCallbackTaskRepository) FindById(id uint) (*uniswapcallback.SwapCal
 	return &task, nil
 }
 
-func (r *SwapCallbackTaskRepository) FindMaxProcessedBlock(chainId int16) (uint64, error) {
+func (r *SwapCallbackTaskRepository) FindMaxProcessedBlock(chainId int16, callbackKey string) (uint64, error) {
 	var task uniswapcallback.SwapCallbackTask
-	err := r.db.Where("chain_id = ? AND status = 0", chainId).Order("end_block DESC").First(&task).Error
+	err := r.db.Where("chain_id = ? AND status = 0 AND callback_key = ?", chainId, callbackKey).Order("end_block DESC").First(&task).Error
 	if err != nil {
 		return 0, err
 	}

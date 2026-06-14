@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"math/big"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -128,16 +129,24 @@ func (s *ThreeGetService) ProcessTask(message map[string]interface{}) {
 		Type: "threeGet",
 	}
 
-	chainIdInterface, ok := message["chainId"]
+	chainIdStr, ok := message["chainId"].(string)
 	if !ok {
-		log.Printf("缺少 chainId 参数")
+		log.Printf("缺少 chainId 参数或格式错误")
 		record.Status = -1
-		record.Message = "缺少 chainId 参数"
+		record.Message = "缺少 chainId 参数或格式错误"
 		record.StartTime = time.Now()
 		s.swapCallbackTaskRepo.Create(record)
 		return
 	}
-	chainId := int(chainIdInterface.(float64))
+	chainId, err := strconv.Atoi(chainIdStr)
+	if err != nil {
+		log.Printf("chainId 格式错误: %v", err)
+		record.Status = -1
+		record.Message = fmt.Sprintf("chainId 格式错误: %v", err)
+		record.StartTime = time.Now()
+		s.swapCallbackTaskRepo.Create(record)
+		return
+	}
 	record.ChainID = int16(chainId)
 
 	callbackKey := "uniswapV3SwapCallback"
@@ -167,15 +176,19 @@ func (s *ThreeGetService) ProcessTask(message map[string]interface{}) {
 	endBlock := uint64(blockNumber)
 	startBlock := uint64(0)
 
-	if eb, ok := message["endBlock"].(float64); ok && eb != 0 {
-		endBlock = uint64(eb)
+	if ebStr, ok := message["endBlock"].(string); ok && ebStr != "" {
+		if eb, err := strconv.ParseUint(ebStr, 10, 64); err == nil && eb != 0 {
+			endBlock = eb
+		}
 	}
-	if sb, ok := message["startBlock"].(float64); ok {
-		startBlock = uint64(sb)
+	if sbStr, ok := message["startBlock"].(string); ok && sbStr != "" {
+		if sb, err := strconv.ParseUint(sbStr, 10, 64); err == nil {
+			startBlock = sb
+		}
 	}
 
 	if startBlock == 0 {
-		maxBlock, err := s.swapCallbackTaskRepo.FindMaxProcessedBlock(int16(chainId))
+		maxBlock, err := s.swapCallbackTaskRepo.FindMaxProcessedBlock(int16(chainId), callbackKey)
 		if err == nil && maxBlock > 0 {
 			startBlock = maxBlock
 		}

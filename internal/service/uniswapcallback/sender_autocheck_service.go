@@ -3,6 +3,7 @@ package uniswapcallback
 import (
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 	"time"
 
@@ -37,16 +38,24 @@ func (s *SenderAutocheckService) ProcessTask(message map[string]interface{}) {
 		Message: "",
 	}
 
-	chainIdInterface, ok := message["chainId"]
+	chainIdStr, ok := message["chainId"].(string)
 	if !ok {
-		log.Printf("缺少 chainId 参数")
+		log.Printf("缺少 chainId 参数或格式错误")
 		record.Status = -1
-		record.Message = "缺少 chainId 参数"
+		record.Message = "缺少 chainId 参数或格式错误"
 		record.StartTime = time.Now()
 		s.swapCallbackTaskRepo.Create(record)
 		return
 	}
-	chainId := int(chainIdInterface.(float64))
+	chainId, err := strconv.Atoi(chainIdStr)
+	if err != nil {
+		log.Printf("chainId 格式错误: %v", err)
+		record.Status = -1
+		record.Message = fmt.Sprintf("chainId 格式错误: %v", err)
+		record.StartTime = time.Now()
+		s.swapCallbackTaskRepo.Create(record)
+		return
+	}
 	record.ChainID = int16(chainId)
 
 	callbackKey := "uniswapV3SwapCallback"
