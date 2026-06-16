@@ -208,7 +208,7 @@ func (s *ThreeGetService) ProcessTask(message map[string]interface{}) {
 		return
 	}
 
-	sig, ok := callbackSignatures[callbackKey]
+	sig, ok := CallbackSignatures[callbackKey]
 	if !ok || sig.Topic == "" {
 		log.Printf("找不到有效的 callbackKey: %s 或 topic 为空", callbackKey)
 		record.Status = -1

@@ -34,21 +34,21 @@ func (ContractCode) TableName() string {
 // AfterFind 查询后解压数据
 func (c *ContractCode) AfterFind() error {
 	if len(c.BinaryCode) > 0 {
-		binary, err := decompress(c.BinaryCode)
+		binary, err := Decompress(c.BinaryCode)
 		if err == nil {
 			c.Binary = binary
 		}
 	}
 
 	if len(c.VerifiedCode) > 0 {
-		verified, err := decompress(c.VerifiedCode)
+		verified, err := Decompress(c.VerifiedCode)
 		if err == nil {
 			c.VerifiedCodeDecompressed = verified
 		}
 	}
 
 	if len(c.DecompiledCode) > 0 {
-		decompiled, err := decompress(c.DecompiledCode)
+		decompiled, err := Decompress(c.DecompiledCode)
 		if err == nil {
 			c.DecompiledCodeDecompressed = decompiled
 		}
@@ -96,8 +96,8 @@ func compress(s string) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// decompress 解压字节数组
-func decompress(data []byte) (string, error) {
+// Decompress 解压字节数组（公开函数）
+func Decompress(data []byte) (string, error) {
 	if len(data) == 0 {
 		return "", errors.New("empty data")
 	}

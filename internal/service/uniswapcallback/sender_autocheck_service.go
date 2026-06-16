@@ -132,7 +132,7 @@ func (s *SenderAutocheckService) ProcessTask(message map[string]interface{}) {
 		}
 
 		// 步骤5: 签名检查通过，进一步验证是否存在实际的函数定义
-		sig, ok := callbackSignatures[callbackKey]
+		sig, ok := CallbackSignatures[callbackKey]
 		if !ok {
 			sender.Status = utils.CHECK_STATE_AUTOCHECKED_FAIL
 			fail++
@@ -173,7 +173,7 @@ func (s *SenderAutocheckService) searchInCode(codeContent string, keyword string
 }
 
 func (s *SenderAutocheckService) searchCallbackSignature(verifiedCode, decompiledCode, key string) bool {
-	sig, ok := callbackSignatures[key]
+	sig, ok := CallbackSignatures[key]
 	if !ok {
 		return false
 	}

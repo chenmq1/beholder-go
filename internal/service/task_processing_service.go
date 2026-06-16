@@ -25,6 +25,7 @@ type TaskProcessingService struct {
 	senderAutocheckService *uniswapcallback.SenderAutocheckService
 	threeGetService        *uniswapcallback.ThreeGetService
 	uniswapCodeGetService  *uniswapcallback.UniswapCodeGetService
+	analyzeService         *uniswapcallback.AnalyzeService
 }
 
 // NewTaskProcessingService 创建TaskProcessingService实例
@@ -80,6 +81,9 @@ func NewTaskProcessingService() (*TaskProcessingService, error) {
 	// 创建UniswapCodeGetService实例
 	uniswapCodeGetService := uniswapcallback.NewUniswapCodeGetService(db, getCodeService)
 
+	// 创建AnalyzeService实例
+	analyzeService := uniswapcallback.NewAnalyzeService(db)
+
 	return &TaskProcessingService{
 		db:                     db,
 		clients:                clients,
@@ -90,6 +94,7 @@ func NewTaskProcessingService() (*TaskProcessingService, error) {
 		senderAutocheckService: senderAutocheckService,
 		threeGetService:        threeGetService,
 		uniswapCodeGetService:  uniswapCodeGetService,
+		analyzeService:         analyzeService,
 	}, nil
 }
 
@@ -126,6 +131,10 @@ func (s *TaskProcessingService) ProcessTask(message map[string]interface{}) {
 					s.uniswapCodeGetService.ProcessTask(message)
 				case "autoCheck":
 					s.senderAutocheckService.ProcessTask(message)
+				case "analyze":
+					if err := s.analyzeService.ProcessTask(message); err != nil {
+						fmt.Printf("处理analyze任务失败: %v\n", err)
+					}
 				default:
 					fmt.Printf("未知任务类型: %s\n", task)
 				}
