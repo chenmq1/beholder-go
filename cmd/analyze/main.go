@@ -113,10 +113,11 @@ func analyzeFromDatabase(sig uniswapcallback.CallbackSignature, signatureKey str
 	analyzeService := uniswapcallback.NewAnalyzeService(db)
 
 	var safeContracts []string
+	chainID := int16(1) // 默认以太坊主网
 
 	if updateStatus {
 		fmt.Println("Analyzing and updating status...")
-		safeContracts, err = analyzeService.AnalyzeAndUpdateStatus(signatureKey)
+		safeContracts, err = analyzeService.AnalyzeAndUpdateStatus(signatureKey, chainID)
 		if err != nil {
 			fmt.Printf("Analysis and update failed: %v\n", err)
 			return
@@ -124,7 +125,7 @@ func analyzeFromDatabase(sig uniswapcallback.CallbackSignature, signatureKey str
 		fmt.Printf("Updated %d safe contracts to status 210\n\n", len(safeContracts))
 	} else {
 		fmt.Println("Analyzing contracts...")
-		results, err := analyzeService.AnalyzeSenders(signatureKey)
+		results, err := analyzeService.AnalyzeSenders(signatureKey, chainID)
 		if err != nil {
 			fmt.Printf("Analysis failed: %v\n", err)
 			return

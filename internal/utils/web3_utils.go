@@ -14,7 +14,7 @@ import (
 
 const (
 	StepLength      = 999
-	IoExceptionRetry = 4
+	IoExceptionRetry = 500
 )
 
 // SolidityEventProcesser 事件处理器接口

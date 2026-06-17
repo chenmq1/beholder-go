@@ -18,7 +18,7 @@ import (
 	"github.com/jinzhu/gorm"
 )
 
-const MAX_BLOCK_PER_TASK = 120000
+const MAX_BLOCK_PER_TASK = 12000
 
 type ThreeGetSubService struct {
 	db        *gorm.DB
@@ -217,7 +217,7 @@ func (s *ThreeGetService) ProcessTask(message map[string]interface{}) {
 		return
 	}
 
-	log.Printf("处理threeGet任务: chainId=%d, startBlock=%d, endBlock=%d", chainId, startBlock, endBlock)
+	log.Printf("处理threeGet任务: chainId=%d, callbackKey=%s, startBlock=%d, endBlock=%d", chainId, callbackKey, startBlock, endBlock)
 
 	segmentSize := uint64(MAX_BLOCK_PER_TASK / 18)
 	var wg sync.WaitGroup

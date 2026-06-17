@@ -41,11 +41,11 @@ type AnalyzeResult struct {
 
 // FindSendersWithPositiveStatus 查询状态为 CHECK_STATE_AUTOCHECKED_POSITIVE 的合约
 // 查询条件:
-//   - chain_id = 1 (以太坊主网)
+//   - chain_id = chainID
 //   - callback_key = callbackKey
 //   - status = CHECK_STATE_AUTOCHECKED_POSITIVE (202)
 // 关联 contract_code 表获取反编译代码
-func (s *AnalyzeService) FindSendersWithPositiveStatus(callbackKey string) ([]*SenderWithDecompiledCode, error) {
+func (s *AnalyzeService) FindSendersWithPositiveStatus(callbackKey string, chainID int16) ([]*SenderWithDecompiledCode, error) {
 	type senderWithCode struct {
 		Address        string `gorm:"column:address"`
 		ChainID        int16  `gorm:"column:chain_id"`
@@ -57,7 +57,7 @@ func (s *AnalyzeService) FindSendersWithPositiveStatus(callbackKey string) ([]*S
 		Select("three_sender.address, three_sender.chain_id, contract_code.decompiled_code").
 		Joins("INNER JOIN contract_code ON three_sender.address = contract_code.address AND three_sender.chain_id = contract_code.chain_id").
 		Where("three_sender.chain_id = ? AND three_sender.callback_key = ? AND three_sender.status = ?",
-			1, callbackKey, utils.CHECK_STATE_AUTOCHECKED_POSITIVE).
+			chainID, callbackKey, utils.CHECK_STATE_AUTOCHECKED_POSITIVE).
 		Find(&results).Error
 
 	if err != nil {
@@ -123,8 +123,8 @@ func isSafeContractInternal(source string, sig CallbackSignature) bool {
 }
 
 // AnalyzeSenders 分析所有符合条件的合约，返回安全合约列表
-func (s *AnalyzeService) AnalyzeSenders(callbackKey string) ([]*AnalyzeResult, error) {
-	senders, err := s.FindSendersWithPositiveStatus(callbackKey)
+func (s *AnalyzeService) AnalyzeSenders(callbackKey string, chainID int16) ([]*AnalyzeResult, error) {
+	senders, err := s.FindSendersWithPositiveStatus(callbackKey, chainID)
 	if err != nil {
 		return nil, err
 	}
@@ -151,8 +151,8 @@ func (s *AnalyzeService) UpdateSenderStatus(address string, chainID int16, statu
 }
 
 // AnalyzeAndUpdateStatus 分析合约并更新安全合约的状态为 210
-func (s *AnalyzeService) AnalyzeAndUpdateStatus(callbackKey string) ([]string, error) {
-	results, err := s.AnalyzeSenders(callbackKey)
+func (s *AnalyzeService) AnalyzeAndUpdateStatus(callbackKey string, chainID int16) ([]string, error) {
+	results, err := s.AnalyzeSenders(callbackKey, chainID)
 	if err != nil {
 		return nil, err
 	}
@@ -160,7 +160,7 @@ func (s *AnalyzeService) AnalyzeAndUpdateStatus(callbackKey string) ([]string, e
 	var safeAddresses []string
 	for _, result := range results {
 		if result.IsSafe {
-			err := s.UpdateSenderStatus(result.Address, 1, 210)
+			err := s.UpdateSenderStatus(result.Address, chainID, 210)
 			if err != nil {
 				return nil, err
 			}
@@ -176,21 +176,26 @@ func (s *AnalyzeService) ProcessTask(message map[string]interface{}) error {
 	fmt.Printf("处理分析任务消息: %v\n", message)
 
 	if callbackKey, ok := message["callbackKey"].(string); ok {
-		return s.AnalyzeAndCreateTask(callbackKey)
+		// 获取 chainId，默认为 1（以太坊主网）
+		chainID := int16(1)
+		if chainIdVal, ok := message["chainId"].(float64); ok {
+			chainID = int16(chainIdVal)
+		}
+		return s.AnalyzeAndCreateTask(callbackKey, chainID)
 	}
 
 	return fmt.Errorf("缺少 callbackKey 参数")
 }
 
 // AnalyzeAndCreateTask 分析合约并创建任务记录
-func (s *AnalyzeService) AnalyzeAndCreateTask(callbackKey string) error {
+func (s *AnalyzeService) AnalyzeAndCreateTask(callbackKey string, chainID int16) error {
 	// 创建任务记录
 	task := &uniswapcallback.SwapCallbackTask{
-		ChainID:     1,
+		ChainID:     chainID,
 		Type:        "analyze",
 		StartTime:   time.Now(),
-		Status:      0, // 0: 待处理
-		Message:     "",
+		Status:      1, // 1: 处理中 (processing)
+		Message:     "processing",
 		CallbackKey: callbackKey,
 	}
 
@@ -199,24 +204,24 @@ func (s *AnalyzeService) AnalyzeAndCreateTask(callbackKey string) error {
 	}
 
 	// 执行分析
-	safeAddresses, err := s.AnalyzeAndUpdateStatus(callbackKey)
+	safeAddresses, err := s.AnalyzeAndUpdateStatus(callbackKey, chainID)
+	
+	// 更新任务状态（无论成功或失败，都设置为完成状态）
+	task.Status = 0 // 0: 完成
+	task.EndTime = time.Now()
+	
 	if err != nil {
-		task.Status = 2 // 失败
-		task.Message = err.Error()
-		task.EndTime = time.Now()
+		task.Message = fmt.Sprintf("分析失败: %v", err)
 		s.db.Save(task)
 		return err
 	}
 
-	// 更新任务状态
-	task.Status = 1 // 成功
 	task.Message = fmt.Sprintf("分析完成，找到 %d 个安全合约", len(safeAddresses))
-	task.EndTime = time.Now()
 	if err := s.db.Save(task).Error; err != nil {
 		return fmt.Errorf("更新任务记录失败: %w", err)
 	}
 
-	fmt.Printf("分析任务完成: callbackKey=%s, 安全合约数量=%d\n", callbackKey, len(safeAddresses))
+	fmt.Printf("分析任务完成: callbackKey=%s, chainID=%d, 安全合约数量=%d\n", callbackKey, chainID, len(safeAddresses))
 	return nil
 }
 

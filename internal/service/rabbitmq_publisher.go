@@ -18,6 +18,7 @@ var taskMessages = map[int]map[string]interface{}{
 	12: {"function": "swapCallback", "task": "codeGet"},
 	13: {"function": "swapCallback", "task": "autoCheck"},
 	14: {"function": "swapCallback", "task": "flow"},
+	15: {"function": "swapCallback", "task": "analyze", "callbackKey": "uniswapv3", "chainId": 1},
 }
 
 type RabbitMQPublisher struct {

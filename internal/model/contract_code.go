@@ -9,8 +9,8 @@ import (
 
 // ContractCode 合约代码实体
 type ContractCode struct {
-	Address             string `json:"address" gorm:"column:address"`
-	ChainID             int16  `json:"chainId" gorm:"column:chain_id"`
+	Address             string `json:"address" gorm:"primary_key;column:address;type:varchar(66)"`
+	ChainID             int16  `json:"chainId" gorm:"primary_key;column:chain_id"`
 	BinaryCode          []byte `json:"-" gorm:"column:binary_code"`
 	Binary              string `json:"binary" gorm:"-"`
 	Eoa                 int16  `json:"eoa"`
