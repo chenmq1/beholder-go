@@ -18,7 +18,7 @@ import (
 	"github.com/jinzhu/gorm"
 )
 
-const MAX_BLOCK_PER_TASK = 12000
+const MAX_BLOCK_PER_TASK = 24000
 
 type ThreeGetSubService struct {
 	db        *gorm.DB
@@ -285,13 +285,15 @@ func (s *ThreeGetService) batchInsertIgnore(senders map[string]bool, chainId int
 		return 0
 	}
 
-	inserted := 0
+	var beforeCount int64
+	s.db.Model(&uniswapcallback.ThreeSender{}).Where("chain_id = ? AND callback_key = ?", chainId, callbackKey).Count(&beforeCount)
+
 	for _, t := range toInsert {
-		err := s.db.Exec("INSERT IGNORE INTO three_sender (address, chain_id, callback_key) VALUES (?, ?, ?)", t.address, t.chainId, t.callbackKey).Error
-		if err == nil {
-			inserted++
-		}
+		s.db.Exec("INSERT IGNORE INTO three_sender (address, chain_id, callback_key) VALUES (?, ?, ?)", t.address, t.chainId, t.callbackKey)
 	}
 
-	return inserted
+	var afterCount int64
+	s.db.Model(&uniswapcallback.ThreeSender{}).Where("chain_id = ? AND callback_key = ?", chainId, callbackKey).Count(&afterCount)
+
+	return int(afterCount - beforeCount)
 }
