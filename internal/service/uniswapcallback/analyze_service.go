@@ -112,8 +112,11 @@ func isSafeContractInternal(source string, sig CallbackSignature) bool {
 		return false
 	}
 
-	senderPatternForward := regexp.MustCompile(`msg\.sender\s*(!=|==|-)\s*(0x[0-9a-fA-F]{40}|[a-zA-Z_][a-zA-Z0-9_]*)`)
-	senderPatternReverse := regexp.MustCompile(`(0x[0-9a-fA-F]{40}|[a-zA-Z_][a-zA-Z0-9_]*)\s*(!=|==)\s*msg\.sender`)
+	// 地址格式：裸地址/变量名 或 address(...) 包装
+	addressPattern := `(?:address\s*\()?(0x[0-9a-fA-F]{40}|[a-zA-Z_][a-zA-Z0-9_]*)(?:\))?`
+
+	senderPatternForward := regexp.MustCompile(`msg\.sender\s*(!=|==|-)\s*` + addressPattern)
+	senderPatternReverse := regexp.MustCompile(addressPattern + `\s*(!=|==)\s*msg\.sender`)
 
 	if senderPatternForward.MatchString(source) || senderPatternReverse.MatchString(source) {
 		return false
