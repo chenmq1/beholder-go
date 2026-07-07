@@ -2,12 +2,13 @@ package uniswapcallback
 
 // ThreeSender ThreeSender实体
 type ThreeSender struct {
-	ChainID     int16  `gorm:"primary_key;column:chain_id" json:"chainId"`
-	Address     string `gorm:"primary_key;column:address;type:varchar(66)" json:"address"`
-	CodeGot     int16  `gorm:"column:code_got" json:"codeGot"`
-	HasCallback int16  `gorm:"column:has_callback" json:"hasCallback"`
-	Status      int    `gorm:"column:status" json:"status"`
-	CallbackKey string `gorm:"primary_key;column:callback_key;type:varchar(100)" json:"callbackKey"`
+	ChainID          int16  `gorm:"primary_key;column:chain_id" json:"chainId"`
+	Address          string `gorm:"primary_key;column:address;type:varchar(66)" json:"address"`
+	CodeGot          int16  `gorm:"column:code_got" json:"codeGot"`
+	HasCallback      int16  `gorm:"column:has_callback" json:"hasCallback"`
+	Status           int    `gorm:"column:status" json:"status"`
+	CallbackKey      string `gorm:"primary_key;column:callback_key;type:varchar(100)" json:"callbackKey"`
+	WalletValueInUSD *int   `gorm:"column:wallet_value_in_usd;type:int(11)" json:"walletValueInUSD"`
 }
 
 // TableName 设置表名

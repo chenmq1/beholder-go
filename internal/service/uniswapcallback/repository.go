@@ -95,3 +95,9 @@ func (r *ThreeSenderRepository) Create(task *uniswapcallback.SwapCallbackTask) e
 	task.StartTime = time.Now()
 	return r.db.Create(task).Error
 }
+
+func (r *ThreeSenderRepository) FindByStatusAndCallbackKeyAndWalletValueIsNull(status int, callbackKey string) ([]*uniswapcallback.ThreeSender, error) {
+	var senders []*uniswapcallback.ThreeSender
+	err := r.db.Where("status = ? AND callback_key = ? AND wallet_value_in_usd IS NULL", status, callbackKey).Find(&senders).Error
+	return senders, err
+}

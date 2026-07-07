@@ -16,16 +16,17 @@ import (
 
 // TaskProcessingService 任务处理服务
 type TaskProcessingService struct {
-	db                     *gorm.DB
-	clients                map[string]*ethclient.Client
-	pairCreateService      *burnpair.PairCreateService
-	pairValuateService     *burnpair.PairValuateService
-	codeGetService         *burnpair.CodeGetService
-	pairAutocheckService   *burnpair.PairAutocheckService
-	senderAutocheckService *uniswapcallback.SenderAutocheckService
-	threeGetService        *uniswapcallback.ThreeGetService
-	uniswapCodeGetService  *uniswapcallback.UniswapCodeGetService
-	analyzeService         *uniswapcallback.AnalyzeService
+	db                       *gorm.DB
+	clients                  map[string]*ethclient.Client
+	pairCreateService        *burnpair.PairCreateService
+	pairValuateService       *burnpair.PairValuateService
+	codeGetService           *burnpair.CodeGetService
+	pairAutocheckService     *burnpair.PairAutocheckService
+	senderAutocheckService   *uniswapcallback.SenderAutocheckService
+	threeGetService          *uniswapcallback.ThreeGetService
+	uniswapCodeGetService    *uniswapcallback.UniswapCodeGetService
+	analyzeService           *uniswapcallback.AnalyzeService
+	walletNetWorthService    *uniswapcallback.WalletNetWorthService
 }
 
 // NewTaskProcessingService 创建TaskProcessingService实例
@@ -84,17 +85,21 @@ func NewTaskProcessingService() (*TaskProcessingService, error) {
 	// 创建AnalyzeService实例
 	analyzeService := uniswapcallback.NewAnalyzeService(db)
 
+	// 创建WalletNetWorthService实例
+	walletNetWorthService := uniswapcallback.NewWalletNetWorthService(db)
+
 	return &TaskProcessingService{
-		db:                     db,
-		clients:                clients,
-		pairCreateService:      pairCreateService,
-		pairValuateService:     pairValuateService,
-		codeGetService:         codeGetService,
-		pairAutocheckService:   pairAutocheckService,
-		senderAutocheckService: senderAutocheckService,
-		threeGetService:        threeGetService,
-		uniswapCodeGetService:  uniswapCodeGetService,
-		analyzeService:         analyzeService,
+		db:                       db,
+		clients:                  clients,
+		pairCreateService:        pairCreateService,
+		pairValuateService:       pairValuateService,
+		codeGetService:           codeGetService,
+		pairAutocheckService:     pairAutocheckService,
+		senderAutocheckService:   senderAutocheckService,
+		threeGetService:          threeGetService,
+		uniswapCodeGetService:    uniswapCodeGetService,
+		analyzeService:           analyzeService,
+		walletNetWorthService:    walletNetWorthService,
 	}, nil
 }
 
@@ -134,6 +139,10 @@ func (s *TaskProcessingService) ProcessTask(message map[string]interface{}) {
 				case "analyze":
 					if err := s.analyzeService.ProcessTask(message); err != nil {
 						fmt.Printf("处理analyze任务失败: %v\n", err)
+					}
+				case "walletNetWorth":
+					if err := s.walletNetWorthService.ProcessTask(message); err != nil {
+						fmt.Printf("处理walletNetWorth任务失败: %v\n", err)
 					}
 				default:
 					fmt.Printf("未知任务类型: %s\n", task)
