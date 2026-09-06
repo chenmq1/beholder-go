@@ -11,12 +11,6 @@ mysql:
   database: beholder
   ssl_mode: disable
 
-redis:
-  host: beholder
-  port: 6379
-  db: 0
-  timeout: 3s
-
 rabbitmq:
   host: beholder
   port: 5672

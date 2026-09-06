@@ -178,14 +178,18 @@ func (s *ThreeGetService) ProcessTask(message map[string]interface{}) {
 	}
 
 	// 分段并发反向获取事件
+	collector, err := getevent.NewCollector(process, nil)
+	if err != nil {
+		log.Printf("构建收集器失败: %v", err)
+		return
+	}
 	if _, _, err := getevent.BackwardConcurrent(
 		context.Background(),
 		client.EthClient,
 		int64(startBlock),
 		int64(endBlock),
 		filter,
-		process,
-		nil,
+		collector,
 		getevent.ConcurrentConfig{
 			SegmentSize: 999,
 			MaxWorkers:  18,

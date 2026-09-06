@@ -162,66 +162,85 @@ type ConcurrentConfig struct {
 
 // ForwardConcurrent 并发正向获取链上事件：
 // 将 [startBlock, endBlock] 按 SegmentSize 切分为多个区块段，每个区块段在独立
-// goroutine 中按步长正向拉取日志并交给 process 处理。
+// goroutine 中按步长正向拉取日志并交给收集器处理。
 // ethFilter 只需提供 Addresses/Topics 等过滤条件，FromBlock/ToBlock 会被忽略。
 //
-// eventModel 为事件模型结构体（如 &ApprovalEvent{}）：
-//   - 非 nil 时使用统一收集逻辑：以模型主键（gorm primary_key，去除 chain_id）为键去重，
-//     value 保存未处理的原始事件（types.Log），首见保留，收集结果经返回值给出；
-//     同时返回每个 key 的出现次数（含首次），可用于 PostProcess 写入 repeat_count 列。
-//     转换与入库由 PostProcess 完成。此时 process 被忽略（传 nil 即可）。
-//   - 为 nil 时使用传入的 process（需自行保证并发安全），返回值 map 均为 nil。
+// collector 经 NewCollector 创建：
+//   - 模型模式（eventModel != nil）：每个区块段持有独立的本地收集器（无锁），
+//     以模型主键（gorm primary_key，去除 chain_id）为键去重，value 保存未处理的
+//     原始事件（types.Log）；全部区块段完成后合并（键冲突按模型 ShouldReplaceInMerge
+//     保留，无则首见保留），合并结果经返回值给出，同时返回每个 key 的出现次数
+//     （含首次），可用于 PostProcess 写入 repeat_count 列。
+//   - 自定义 process 模式（eventModel == nil）：所有区块段共享传入的 process
+//     （需自行保证并发安全），返回值 map 均为 nil。
 //
 // ShouldContinue=false 只会停止当前区块段；任一区块段最终失败时返回聚合错误，
 // 其他区块段不受影响。
-func ForwardConcurrent(ctx context.Context, client *ethclient.Client, startBlock, endBlock int64, ethFilter ethereum.FilterQuery, process ProcessFunc, eventModel interface{}, cfg ConcurrentConfig) (map[string]types.Log, map[string]int, error) {
-	collector, err := newCollector(process, eventModel)
-	if err != nil {
-		return nil, nil, err
+func ForwardConcurrent(ctx context.Context, client *ethclient.Client, startBlock, endBlock int64, ethFilter ethereum.FilterQuery, collector ConcurrentCollector, cfg ConcurrentConfig) (map[string]types.Log, map[string]int, error) {
+	if collector == nil {
+		return nil, nil, fmt.Errorf("collector 不能为空")
 	}
 
 	stepLength := cfg.StepLength
 	if stepLength <= 0 {
 		stepLength = DefaultStepLength
 	}
-	runSegment := func(from, to int64) error {
-		return Forward(ctx, client, from, to, ethFilter, collector.process, stepLength)
+	segs, err := runSegmentsConcurrently(startBlock, endBlock, cfg, collector.NewSegment,
+		func(sc SegmentCollector, from, to int64) error {
+			return Forward(ctx, client, from, to, ethFilter, sc.Process(), stepLength)
+		})
+	for _, sc := range segs {
+		collector.Merge(sc)
 	}
-	err = runSegmentsConcurrently(startBlock, endBlock, cfg, runSegment)
-	return collector.result(), collector.resultCounts(), err
+	return collector.Events(), collector.Counts(), err
 }
 
 // BackwardConcurrent 并发反向获取链上事件：
 // 将 [startBlock, endBlock] 按 SegmentSize 切分为多个区块段，每个区块段在独立
-// goroutine 中按步长反向拉取日志并交给 process 处理。
+// goroutine 中按步长反向拉取日志并交给收集器处理。
 // ethFilter 只需提供 Addresses/Topics 等过滤条件，FromBlock/ToBlock 会被忽略。
 // 其余语义同 ForwardConcurrent。
-func BackwardConcurrent(ctx context.Context, client *ethclient.Client, startBlock, endBlock int64, ethFilter ethereum.FilterQuery, process ProcessFunc, eventModel interface{}, cfg ConcurrentConfig) (map[string]types.Log, map[string]int, error) {
-	collector, err := newCollector(process, eventModel)
-	if err != nil {
-		return nil, nil, err
+func BackwardConcurrent(ctx context.Context, client *ethclient.Client, startBlock, endBlock int64, ethFilter ethereum.FilterQuery, collector ConcurrentCollector, cfg ConcurrentConfig) (map[string]types.Log, map[string]int, error) {
+	if collector == nil {
+		return nil, nil, fmt.Errorf("collector 不能为空")
 	}
 
 	stepLength := cfg.StepLength
 	if stepLength <= 0 {
 		stepLength = DefaultStepLength
 	}
-	runSegment := func(from, to int64) error {
-		return Backward(ctx, client, from, to, ethFilter, collector.process, stepLength)
+	segs, err := runSegmentsConcurrently(startBlock, endBlock, cfg, collector.NewSegment,
+		func(sc SegmentCollector, from, to int64) error {
+			return Backward(ctx, client, from, to, ethFilter, sc.Process(), stepLength)
+		})
+	for _, sc := range segs {
+		collector.Merge(sc)
 	}
-	err = runSegmentsConcurrently(startBlock, endBlock, cfg, runSegment)
-	return collector.result(), collector.resultCounts(), err
+	return collector.Events(), collector.Counts(), err
 }
 
-// runSegmentsConcurrently 将区块范围切分为不重叠的区块段并发执行
-func runSegmentsConcurrently(startBlock, endBlock int64, cfg ConcurrentConfig, runSegment func(from, to int64) error) error {
+// runSegmentsConcurrently 将区块范围切分为不重叠的区块段并发执行。
+// 每个区块段先调用 newSeg 创建本地收集器（写入 segs[i]，每槽仅写一次无竞争），
+// 全部完成后由调用方按序合并。
+func runSegmentsConcurrently(startBlock, endBlock int64, cfg ConcurrentConfig, newSeg func() SegmentCollector, runSegment func(sc SegmentCollector, from, to int64) error) ([]SegmentCollector, error) {
 	if startBlock > endBlock {
-		return nil
+		return nil, nil
 	}
 
 	segmentSize := int64(cfg.SegmentSize)
 	if segmentSize <= 0 {
 		segmentSize = DefaultStepLength
+	}
+
+	// 枚举不重叠区块段
+	type segment struct{ from, to int64 }
+	var segments []segment
+	for segStart := startBlock; segStart <= endBlock; segStart += segmentSize {
+		segEnd := segStart + segmentSize - 1
+		if segEnd > endBlock {
+			segEnd = endBlock
+		}
+		segments = append(segments, segment{segStart, segEnd})
 	}
 
 	// 限制并发数
@@ -230,34 +249,32 @@ func runSegmentsConcurrently(startBlock, endBlock int64, cfg ConcurrentConfig, r
 		semaphore = make(chan struct{}, cfg.MaxWorkers)
 	}
 
+	segs := make([]SegmentCollector, len(segments))
 	var mu sync.Mutex
 	var errs []error
 
 	var wg sync.WaitGroup
-	for segStart := startBlock; segStart <= endBlock; segStart += segmentSize {
-		segEnd := segStart + segmentSize - 1
-		if segEnd > endBlock {
-			segEnd = endBlock
-		}
-
+	for i, seg := range segments {
 		if semaphore != nil {
 			semaphore <- struct{}{}
 		}
 
 		wg.Add(1)
-		go func(from, to int64) {
+		go func(idx int, from, to int64) {
 			defer wg.Done()
 			if semaphore != nil {
 				defer func() { <-semaphore }()
 			}
-			if err := runSegment(from, to); err != nil {
+			sc := newSeg()
+			segs[idx] = sc // 每槽仅写一次，无竞争
+			if err := runSegment(sc, from, to); err != nil {
 				mu.Lock()
 				errs = append(errs, fmt.Errorf("区块段 [%d, %d] 处理失败: %w", from, to, err))
 				mu.Unlock()
 			}
-		}(segStart, segEnd)
+		}(i, seg.from, seg.to)
 	}
 
 	wg.Wait()
-	return errors.Join(errs...)
+	return segs, errors.Join(errs...)
 }

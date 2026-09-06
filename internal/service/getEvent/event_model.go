@@ -8,7 +8,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts/abi"
@@ -34,9 +33,15 @@ import (
 // 动态类型（string/bytes/数组）由 go-ethereum abi 包按规范解码。
 //
 // 收集阶段（统一 process）：以模型的主键字段（gorm primary_key，去除 chain_id）的值
-// 作为去重键，map 的 value 保存未处理的原始事件（types.Log），首见保留；
-// 模型实现 ShouldReplace(existing, incoming *types.Log) bool 时（如 Sync 事件），
-// 键已存在则由该函数决定是否用新事件替换（如保留 blockNumber 最新的）。
+// 作为去重键，map 的 value 保存未处理的原始事件（types.Log）。
+// 去重替换策略分两级（均可选）：
+//   - 段内（ShouldReplaceInSeg）：同一区块段内键冲突时的替换策略，未实现默认首见保留；
+//     遍历方向由 DedupDirection 声明（默认反向：Backward 拉取语义下 slice 反向遍历，
+//     首见即段内最新事件）
+//   - 合并（ShouldReplaceInMerge）：跨区块段合并时键冲突的替换策略（如 Sync 保留
+//     blockNumber 最新的），未实现默认首见保留
+//
+// 并发收集按区块段分片：每段一个无锁本地收集器，全部完成后合并，全程无全局锁。
 //
 // 入库阶段（PostProcess）：按 json tag 将原始事件转换为结构体字段——数值字段
 // （big.Int / *big.Int / int64 / uint64）自动从解码值转换，然后 INSERT ... ON DUPLICATE KEY 入库：
@@ -44,7 +49,7 @@ import (
 //   - 有 block_number 列时，仅当新事件 block_number >= 库中时才覆盖业务列（保留最新）；
 //   - 其余冲突无动作（等价 INSERT IGNORE）。
 //
-// 无 json 来源的普通列（json tag 为 "-" 或空，如 token1/token2）随 INSERT 写入
+// 无 json 来源的普通列（json tag 为 "-" 或空，如 token0/token1）随 INSERT 写入
 // 零值（指针字段为 NULL），冲突时不更新。
 // 入库参数统一规范化：big.Int → 十进制字符串（uint256 超出 BIGINT 范围，存 VARCHAR）、
 // address → 小写 hex、bool → 1/0、bytes → hex 字符串。
@@ -61,11 +66,34 @@ type dataFormatter interface {
 	DataFormat() string
 }
 
-// logReplacer 事件替换策略接口：收集去重键已存在时，由模型决定是否用新事件
-// 替换（如 Sync 事件保留 blockNumber 最新的）。配合 block_number 列可实现
-// 数据库层面的条件覆盖。
-type logReplacer interface {
-	ShouldReplace(existing *types.Log, incoming *types.Log) bool
+// DedupDirection 收集阶段的去重遍历方向（与拉取方向对应）
+type DedupDirection int
+
+const (
+	// DedupBackward 默认：事件流从新到旧（Backward 拉取），去重时 slice 反向遍历，
+	// 首见保留即保留最新事件
+	DedupBackward DedupDirection = iota
+	// DedupForward 事件流从旧到新（Forward 拉取），去重时 slice 正向遍历，
+	// 首见保留即保留最早事件
+	DedupForward
+)
+
+// dedupDirectioner 去重遍历方向声明接口（可选）：未实现默认 DedupBackward
+type dedupDirectioner interface {
+	DedupDirection() DedupDirection
+}
+
+// segReplacer 段内替换策略接口（可选）：同一区块段内去重键冲突时，由模型决定
+// 是否用新事件替换。未实现默认首见保留。
+type segReplacer interface {
+	ShouldReplaceInSeg(existing *types.Log, incoming *types.Log) bool
+}
+
+// mergeReplacer 合并替换策略接口（可选）：跨区块段合并去重键冲突时，由模型决定
+// 是否用新事件替换（如 Sync 事件保留 blockNumber 最新的）。未实现默认首见保留。
+// 配合 block_number 列可实现数据库层面的条件覆盖。
+type mergeReplacer interface {
+	ShouldReplaceInMerge(existing *types.Log, incoming *types.Log) bool
 }
 
 type sourceKind int
@@ -96,7 +124,9 @@ type eventPlan struct {
 	pkFields       []planField                              // 主键字段（不含 chain_id），用于去重
 	repeatCountIdx int                                      // repeat_count 字段下标，-1 表示无
 	blockNumberCol string                                   // block_number 列名（json:"blockNumber" 字段），空表示无
-	replaceFn      func(existing, incoming *types.Log) bool // ShouldReplace 策略，nil = 首见保留
+	segReplaceFn   func(existing, incoming *types.Log) bool // ShouldReplaceInSeg 策略，nil = 首见保留
+	mergeReplaceFn func(existing, incoming *types.Log) bool // ShouldReplaceInMerge 策略，nil = 首见保留
+	dedupForward   bool                                     // 去重遍历方向：false（默认）= 反向（Backward 语义）
 	dataTypes      []abi.Type                               // DataFormat 解析结果，nil 表示未声明
 	dataArgs       abi.Arguments                            // dataTypes 非空时预构造，用于 Unpack
 }
@@ -171,7 +201,7 @@ func buildEventPlan(model interface{}) (*eventPlan, error) {
 
 		jsonTag := strings.TrimSpace(strings.Split(sf.Tag.Get("json"), ",")[0])
 		if jsonTag == "" || jsonTag == "-" {
-			// 无事件来源的普通列（如 token1/token2）：随 INSERT 写入零值（指针字段为 NULL），冲突不更新
+			// 无事件来源的普通列（如 token0/token1）：随 INSERT 写入零值（指针字段为 NULL），冲突不更新
 			plan.plainFields = append(plan.plainFields, planField{index: i, column: column, source: srcNone})
 			continue
 		}
@@ -190,9 +220,15 @@ func buildEventPlan(model interface{}) (*eventPlan, error) {
 		}
 	}
 
-	// ShouldReplace：收集去重键冲突时的替换策略（如保留 blockNumber 最新的）
-	if lr, ok := model.(logReplacer); ok {
-		plan.replaceFn = lr.ShouldReplace
+	// 两级替换策略与遍历方向（均为可选实现）
+	if sr, ok := model.(segReplacer); ok {
+		plan.segReplaceFn = sr.ShouldReplaceInSeg
+	}
+	if mr, ok := model.(mergeReplacer); ok {
+		plan.mergeReplaceFn = mr.ShouldReplaceInMerge
+	}
+	if dd, ok := model.(dedupDirectioner); ok {
+		plan.dedupForward = dd.DedupDirection() == DedupForward
 	}
 
 	if len(plan.pkFields) == 0 {
@@ -476,11 +512,9 @@ func (p *eventPlan) insertSQL() string {
 	}
 	base := fmt.Sprintf("INSERT INTO `%s` (%s) VALUES (%s)",
 		p.tableName, strings.Join(cols, ", "), strings.Join(placeholders, ", "))
-	// 有 repeat_count 列时，冲突累加计数
-	if p.repeatCountIdx >= 0 {
-		return base + " ON DUPLICATE KEY UPDATE repeat_count = repeat_count + VALUES(repeat_count)"
-	}
-	// 有 block_number 列时（配合 ShouldReplace 保留最新语义）：仅当新事件
+
+	var updates []string
+	// 有 block_number 列时（配合 ShouldReplaceInMerge 保留最新语义）：仅当新事件
 	// block_number >= 库中时才覆盖业务列；block_number 本身最后取较大值
 	// （MySQL 的 ON DUPLICATE KEY UPDATE 按序求值，前面的 IF 引用的是尚未更新的 block_number）
 	if p.blockNumberCol != "" {
@@ -488,7 +522,6 @@ func (p *eventPlan) insertSQL() string {
 		for _, f := range p.pkFields {
 			pkCols[f.column] = true
 		}
-		updates := make([]string, 0, len(p.insertFields)+1)
 		for _, f := range p.insertFields {
 			if f.source == srcBlockNumber || pkCols[f.column] {
 				continue
@@ -497,10 +530,16 @@ func (p *eventPlan) insertSQL() string {
 				"%[1]s = IF(VALUES(block_number) >= block_number, VALUES(%[1]s), %[1]s)", f.column))
 		}
 		updates = append(updates, "block_number = GREATEST(block_number, VALUES(block_number))")
-		return base + " ON DUPLICATE KEY UPDATE " + strings.Join(updates, ", ")
 	}
-	// 其余：冲突无动作（等价 INSERT IGNORE）
-	return base + " ON DUPLICATE KEY UPDATE " + cols[0] + "=" + cols[0]
+	// 有 repeat_count 列时，冲突累加计数（可与 block_number 条件覆盖并存）
+	if p.repeatCountIdx >= 0 {
+		updates = append(updates, "repeat_count = repeat_count + VALUES(repeat_count)")
+	}
+	// 无更新策略：冲突无动作（等价 INSERT IGNORE）
+	if len(updates) == 0 {
+		return base + " ON DUPLICATE KEY UPDATE " + cols[0] + "=" + cols[0]
+	}
+	return base + " ON DUPLICATE KEY UPDATE " + strings.Join(updates, ", ")
 }
 
 func (p *eventPlan) insertArgs(entity interface{}, chainId int) []interface{} {
@@ -598,61 +637,122 @@ func PostProcess(db *gorm.DB, events map[string]types.Log, counts map[string]int
 	return inserted, errors.Join(errs...)
 }
 
-// eventCollector 并发收集器：统一包裹自定义 process 或基于事件模型的原始事件收集
-type eventCollector struct {
-	process ProcessFunc
-	events  map[string]types.Log
-	counts  map[string]int // 每个 key 的出现次数（含首次）
-	mu      sync.Mutex
+// ConcurrentCollector 并发收集器接口：为每个区块段提供独立的本地收集器（无锁），
+// 全部区块段完成后按序合并。模型模式（eventCollector / MultiCollector）实现此接口，
+// 自定义 process 模式由 processCollector 适配（共享 process，无收集状态）。
+type ConcurrentCollector interface {
+	// NewSegment 创建区块段本地收集器：仅被所属区块段的 goroutine 使用，无需并发保护
+	NewSegment() SegmentCollector
+	// Merge 合并一个区块段的本地收集结果（全部区块段完成后顺序调用）
+	Merge(seg SegmentCollector)
+	// Events 返回合并后的去重事件（单模型模式）；其他模式返回 nil
+	Events() map[string]types.Log
+	// Counts 返回合并后的 key 出现次数（单模型模式）；其他模式返回 nil
+	Counts() map[string]int
 }
 
-// newCollector eventModel != nil 时构建统一收集器（按主键去重、value 存原始事件），
-// 同时记录每个 key 的出现次数；eventModel == nil 时直接使用传入的 process。
-func newCollector(process ProcessFunc, eventModel interface{}) (*eventCollector, error) {
-	c := &eventCollector{events: map[string]types.Log{}, counts: map[string]int{}}
+// SegmentCollector 区块段本地收集器
+type SegmentCollector interface {
+	Process() ProcessFunc
+}
 
+// segmentFunc 自定义 process 的区块段适配：直接透传共享 process
+type segmentFunc struct{ fn ProcessFunc }
+
+func (s segmentFunc) Process() ProcessFunc { return s.fn }
+
+// processCollector 自定义 process 收集器：无收集状态，Events/Counts 恒为 nil
+type processCollector struct{ process ProcessFunc }
+
+func (p *processCollector) NewSegment() SegmentCollector { return segmentFunc{p.process} }
+func (p *processCollector) Merge(SegmentCollector)       {}
+func (p *processCollector) Events() map[string]types.Log { return nil }
+func (p *processCollector) Counts() map[string]int       { return nil }
+
+// NewCollector 创建并发收集器：eventModel != nil 为模型模式（每个区块段一个无锁
+// 本地收集器，按主键去重，段内键冲突按 ShouldReplaceInSeg 决定保留（未实现则按
+// DedupDirection 遍历方向首见保留），完成后合并时按 ShouldReplaceInMerge 决定）；
+// eventModel == nil 为自定义 process 模式（所有区块段共享同一 process，需自行保证
+// 并发安全）。
+func NewCollector(process ProcessFunc, eventModel interface{}) (ConcurrentCollector, error) {
 	if eventModel == nil {
 		if process == nil {
 			return nil, fmt.Errorf("eventModel 与 process 不能同时为空")
 		}
-		c.process = process
-		return c, nil
+		return &processCollector{process: process}, nil
 	}
-
 	plan, err := buildEventPlan(eventModel)
 	if err != nil {
 		return nil, err
 	}
+	return &eventCollector{plan: plan, events: map[string]types.Log{}, counts: map[string]int{}}, nil
+}
 
-	c.process = func(logs []types.Log, original ethereum.FilterQuery) Result {
-		for i := range logs {
+// eventCollector 单模型收集器：events/counts 为合并后的全局结果
+type eventCollector struct {
+	plan    *eventPlan
+	process ProcessFunc
+	events  map[string]types.Log
+	counts  map[string]int // 每个 key 的出现次数（含首次）
+}
+
+func (c *eventCollector) NewSegment() SegmentCollector {
+	if c.plan == nil {
+		return segmentFunc{c.process}
+	}
+	return &segmentCollector{plan: c.plan, events: map[string]types.Log{}, counts: map[string]int{}}
+}
+
+// Merge 合并区块段本地结果：重复 key 按 ShouldReplaceInMerge 决定保留（未实现则首见保留），counts 累加
+func (c *eventCollector) Merge(seg SegmentCollector) {
+	sc, ok := seg.(*segmentCollector)
+	if !ok {
+		return
+	}
+	for k, l := range sc.events {
+		if ex, exists := c.events[k]; !exists {
+			c.events[k] = l
+		} else if c.plan.mergeReplaceFn != nil && c.plan.mergeReplaceFn(&ex, &l) {
+			c.events[k] = l
+		}
+	}
+	for k, v := range sc.counts {
+		c.counts[k] += v
+	}
+}
+
+func (c *eventCollector) Events() map[string]types.Log { return c.events }
+func (c *eventCollector) Counts() map[string]int       { return c.counts }
+
+// segmentCollector 区块段本地收集器（无锁）：按模型主键去重，value 存原始事件
+type segmentCollector struct {
+	plan   *eventPlan
+	events map[string]types.Log
+	counts map[string]int
+}
+
+func (s *segmentCollector) Process() ProcessFunc {
+	return func(logs []types.Log, _ ethereum.FilterQuery) Result {
+		n := len(logs)
+		for j := 0; j < n; j++ {
+			i := j
+			if !s.plan.dedupForward {
+				i = n - 1 - j // 默认反向遍历：Backward 拉取语义下首见即最新
+			}
 			l := &logs[i]
-			key, ok := plan.DedupKey(l)
+			key, ok := s.plan.DedupKey(l)
 			if !ok {
 				continue
 			}
-			c.mu.Lock()
-			c.counts[key]++
-			if ex, exists := c.events[key]; !exists {
-				c.events[key] = *l
-			} else if plan.replaceFn != nil && plan.replaceFn(&ex, l) {
-				c.events[key] = *l
+			s.counts[key]++
+			if ex, exists := s.events[key]; !exists {
+				s.events[key] = *l
+			} else if s.plan.segReplaceFn != nil && s.plan.segReplaceFn(&ex, l) {
+				s.events[key] = *l
 			}
-			c.mu.Unlock()
 		}
 		return DefaultResult()
 	}
-	return c, nil
-}
-
-// result 返回收集结果（去重后的原始事件）；使用自定义 process 时返回 nil
-func (c *eventCollector) result() map[string]types.Log {
-	return c.events
-}
-
-// resultCounts 返回每个 key 的出现次数（含首次）；使用自定义 process 时为空
-func (c *eventCollector) resultCounts() map[string]int {
-	return c.counts
 }
 
 // ModelResult 多模型收集器中单个模型的收集结果
@@ -664,23 +764,34 @@ type ModelResult struct {
 
 // MultiCollector 多模型收集器：一次拉取事件流，按 topic0 路由到对应模型去重。
 // 各模型的去重键、计数互相独立，收集结果按模型分组返回。
+// 并发收集时每个区块段持有本地路由结果（multiSegment），完成后合并，全程无锁。
+// 各模型的 DedupDirection 必须一致（构建时校验，混合方向直接报错）。
 type MultiCollector struct {
-	plans   []*eventPlan
-	results []ModelResult
-	route   map[common.Hash]int // topic0 → 模型下标
-	mu      sync.Mutex
+	plans        []*eventPlan
+	results      []ModelResult
+	route        map[common.Hash]int // topic0 → 模型下标
+	dedupForward bool                // 共享的去重遍历方向（与所有模型一致）
 }
 
-// NewMultiCollector 构建多模型收集器；modelsByTopic0 为 topic0 hex（0x 开头）→ 事件模型实例
+// NewMultiCollector 构建多模型收集器；modelsByTopic0 为 topic0 hex（0x 开头）→ 事件模型实例。
+// 各模型的去重方向（DedupDirection）必须一致，混合方向返回错误。
 func NewMultiCollector(modelsByTopic0 map[string]interface{}) (*MultiCollector, error) {
 	if len(modelsByTopic0) == 0 {
 		return nil, fmt.Errorf("modelsByTopic0 不能为空")
 	}
 	m := &MultiCollector{route: make(map[common.Hash]int, len(modelsByTopic0))}
+	firstName := ""
 	for topicHex, model := range modelsByTopic0 {
 		plan, err := buildEventPlan(model)
 		if err != nil {
 			return nil, err
+		}
+		name := plan.structType.Name()
+		if firstName == "" {
+			firstName = name
+			m.dedupForward = plan.dedupForward
+		} else if plan.dedupForward != m.dedupForward {
+			return nil, fmt.Errorf("事件 %s 与 %s 的去重方向不同（DedupForward/DedupBackward），不能组合收集", name, firstName)
 		}
 		h := common.HexToHash(topicHex)
 		if _, dup := m.route[h]; dup {
@@ -693,30 +804,73 @@ func NewMultiCollector(modelsByTopic0 map[string]interface{}) (*MultiCollector, 
 	return m, nil
 }
 
-// Process 返回供并发拉取使用的统一处理函数：按 topic0 路由并去重计数
-func (m *MultiCollector) Process() ProcessFunc {
+// NewSegment 创建区块段本地收集器：按 topic0 路由到本地结果，无锁
+func (m *MultiCollector) NewSegment() SegmentCollector {
+	results := make([]ModelResult, len(m.plans))
+	for i := range results {
+		results[i] = ModelResult{Model: m.results[i].Model, Events: map[string]types.Log{}, Counts: map[string]int{}}
+	}
+	return &multiSegment{mc: m, results: results}
+}
+
+// Merge 合并区块段本地结果：重复 key 按 ShouldReplaceInMerge 决定保留（未实现则首见保留），counts 累加
+func (m *MultiCollector) Merge(seg SegmentCollector) {
+	ms, ok := seg.(*multiSegment)
+	if !ok {
+		return
+	}
+	for i := range m.results {
+		for k, l := range ms.results[i].Events {
+			ex, exists := m.results[i].Events[k]
+			if !exists {
+				m.results[i].Events[k] = l
+				continue
+			}
+			if rp := m.plans[i].mergeReplaceFn; rp != nil && rp(&ex, &l) {
+				m.results[i].Events[k] = l
+			}
+		}
+		for k, v := range ms.results[i].Counts {
+			m.results[i].Counts[k] += v
+		}
+	}
+}
+
+func (m *MultiCollector) Events() map[string]types.Log { return nil }
+func (m *MultiCollector) Counts() map[string]int       { return nil }
+
+// multiSegment 区块段本地收集器（无锁）：按 topic0 路由去重
+type multiSegment struct {
+	mc      *MultiCollector
+	results []ModelResult
+}
+
+func (s *multiSegment) Process() ProcessFunc {
 	return func(logs []types.Log, _ ethereum.FilterQuery) Result {
-		for i := range logs {
+		n := len(logs)
+		for j := 0; j < n; j++ {
+			i := j
+			if !s.mc.dedupForward {
+				i = n - 1 - j // 默认反向遍历：升序输出下首见即最新
+			}
 			l := &logs[i]
 			if len(l.Topics) == 0 {
 				continue
 			}
-			idx, ok := m.route[l.Topics[0]] // 只读 map，无锁安全
+			idx, ok := s.mc.route[l.Topics[0]] // 只读 map，无锁安全
 			if !ok {
 				continue
 			}
-			key, ok := m.plans[idx].DedupKey(l)
+			key, ok := s.mc.plans[idx].DedupKey(l)
 			if !ok {
 				continue
 			}
-			m.mu.Lock()
-			m.results[idx].Counts[key]++
-			if ex, exists := m.results[idx].Events[key]; !exists {
-				m.results[idx].Events[key] = *l
-			} else if rp := m.plans[idx].replaceFn; rp != nil && rp(&ex, l) {
-				m.results[idx].Events[key] = *l
+			s.results[idx].Counts[key]++
+			if ex, exists := s.results[idx].Events[key]; !exists {
+				s.results[idx].Events[key] = *l
+			} else if rp := s.mc.plans[idx].segReplaceFn; rp != nil && rp(&ex, l) {
+				s.results[idx].Events[key] = *l
 			}
-			m.mu.Unlock()
 		}
 		return DefaultResult()
 	}

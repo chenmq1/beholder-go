@@ -96,7 +96,11 @@ func (s *PairCreateService) ProcessTask(message map[string]interface{}) error {
 
 	// 分段并发获取链上事件并交给 ProcessEvents 处理
 	ctx := context.Background()
-	if _, _, err := getevent.ForwardConcurrent(ctx, s.client, int64(startBlock), int64(endBlock), filter, s.ProcessEvents, nil, getevent.ConcurrentConfig{
+	collector, err := getevent.NewCollector(s.ProcessEvents, nil)
+	if err != nil {
+		return fmt.Errorf("构建收集器失败: %w", err)
+	}
+	if _, _, err := getevent.ForwardConcurrent(ctx, s.client, int64(startBlock), int64(endBlock), filter, collector, getevent.ConcurrentConfig{
 		SegmentSize: 5000,
 		MaxWorkers:  10,
 	}); err != nil {

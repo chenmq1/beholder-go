@@ -269,8 +269,7 @@ func (s *EventCollectService) ProcessTask(message map[string]interface{}) {
 			int64(startBlock),
 			int64(endBlock),
 			filter,
-			mc.Process(),
-			nil,
+			mc,
 			getevent.ConcurrentConfig{
 				SegmentSize: cfg.SegmentSize,
 				MaxWorkers:  cfg.MaxWorkers,
@@ -288,14 +287,22 @@ func (s *EventCollectService) ProcessTask(message map[string]interface{}) {
 		}
 	} else {
 		// 单模型收集：以模型主键（去除 chain_id）为键去重，value 为未处理的原始事件
+		collector, err := getevent.NewCollector(nil, cfg.EventModel)
+		if err != nil {
+			log.Printf("构建收集器失败: %v", err)
+			record.Status = -1
+			record.EndTime = time.Now()
+			record.Message = fmt.Sprintf("构建收集器失败: %v", err)
+			s.db.Save(record)
+			return
+		}
 		events, counts, err := getevent.BackwardConcurrent(
 			context.Background(),
 			client.EthClient,
 			int64(startBlock),
 			int64(endBlock),
 			filter,
-			nil,
-			cfg.EventModel,
+			collector,
 			getevent.ConcurrentConfig{
 				SegmentSize: cfg.SegmentSize,
 				MaxWorkers:  cfg.MaxWorkers,
