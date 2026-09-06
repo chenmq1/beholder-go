@@ -9,6 +9,13 @@ import (
 
 	"github.com/beholder-daemon/config"
 	"github.com/beholder-daemon/internal/service/burnpair"
+	svccommon "github.com/beholder-daemon/internal/service/common"
+	"github.com/beholder-daemon/internal/service/common/approve"
+	"github.com/beholder-daemon/internal/service/common/commonevent"
+	"github.com/beholder-daemon/internal/service/common/mint"
+	"github.com/beholder-daemon/internal/service/common/swapv2"
+	"github.com/beholder-daemon/internal/service/common/swapv3"
+	"github.com/beholder-daemon/internal/service/common/syncevent"
 	"github.com/beholder-daemon/internal/service/getcode"
 	"github.com/beholder-daemon/internal/service/uniswapcallback"
 	"github.com/beholder-daemon/internal/utils"
@@ -27,6 +34,12 @@ type TaskProcessingService struct {
 	uniswapCodeGetService    *uniswapcallback.UniswapCodeGetService
 	analyzeService           *uniswapcallback.AnalyzeService
 	walletNetWorthService    *uniswapcallback.WalletNetWorthService
+	approveEventGetService   *svccommon.EventCollectService
+	mintEventGetService      *svccommon.EventCollectService
+	swapV2EventGetService    *svccommon.EventCollectService
+	swapV3EventGetService    *svccommon.EventCollectService
+	syncEventGetService      *svccommon.EventCollectService
+	commonEventGetService    *svccommon.EventCollectService
 }
 
 // NewTaskProcessingService 创建TaskProcessingService实例
@@ -55,7 +68,7 @@ func NewTaskProcessingService() (*TaskProcessingService, error) {
 	web3Client := utils.NewWeb3Client(context.Background(), bscClient, "bsc")
 	
 	// 创建PairValuateService实例
-	pairValuateService := burnpair.NewPairValuateService(db, web3Client, utils.NewWeb3Utils())
+	pairValuateService := burnpair.NewPairValuateService(db, web3Client)
 
 	// 创建Chains实例
 	chains := config.NewChains()
@@ -77,7 +90,7 @@ func NewTaskProcessingService() (*TaskProcessingService, error) {
 	for name, client := range clients {
 		web3Clients[name] = utils.NewWeb3Client(context.Background(), client, name)
 	}
-	threeGetService := uniswapcallback.NewThreeGetService(db, web3Clients, utils.NewWeb3Utils())
+	threeGetService := uniswapcallback.NewThreeGetService(db, web3Clients)
 
 	// 创建UniswapCodeGetService实例
 	uniswapCodeGetService := uniswapcallback.NewUniswapCodeGetService(db, getCodeService)
@@ -87,6 +100,24 @@ func NewTaskProcessingService() (*TaskProcessingService, error) {
 
 	// 创建WalletNetWorthService实例
 	walletNetWorthService := uniswapcallback.NewWalletNetWorthService(db)
+
+	// 创建Approve事件收集服务实例
+	approveEventGetService := approve.NewEventGetService(db, web3Clients)
+
+	// 创建Mint事件收集服务实例
+	mintEventGetService := mint.NewEventGetService(db, web3Clients)
+
+	// 创建SwapV2事件收集服务实例
+	swapV2EventGetService := swapv2.NewEventGetService(db, web3Clients)
+
+	// 创建SwapV3事件收集服务实例
+	swapV3EventGetService := swapv3.NewEventGetService(db, web3Clients)
+
+	// 创建Sync事件收集服务实例
+	syncEventGetService := syncevent.NewEventGetService(db, web3Clients)
+
+	// 创建组合事件收集服务实例（events 参数可选 approve/swapV2/swapV3/sync 任意组合）
+	commonEventGetService := commonevent.NewEventGetService(db, web3Clients)
 
 	return &TaskProcessingService{
 		db:                       db,
@@ -100,6 +131,12 @@ func NewTaskProcessingService() (*TaskProcessingService, error) {
 		uniswapCodeGetService:    uniswapCodeGetService,
 		analyzeService:           analyzeService,
 		walletNetWorthService:    walletNetWorthService,
+		approveEventGetService:   approveEventGetService,
+		mintEventGetService:      mintEventGetService,
+		swapV2EventGetService:    swapV2EventGetService,
+		swapV3EventGetService:    swapV3EventGetService,
+		syncEventGetService:      syncEventGetService,
+		commonEventGetService:    commonEventGetService,
 	}, nil
 }
 
@@ -144,6 +181,60 @@ func (s *TaskProcessingService) ProcessTask(message map[string]interface{}) {
 					if err := s.walletNetWorthService.ProcessTask(message); err != nil {
 						fmt.Printf("处理walletNetWorth任务失败: %v\n", err)
 					}
+				default:
+					fmt.Printf("未知任务类型: %s\n", task)
+				}
+			}
+		} else if function == "approve" {
+			if task, ok := message["task"].(string); ok {
+				switch task {
+				case "collect":
+					s.approveEventGetService.ProcessTask(message)
+				default:
+					fmt.Printf("未知任务类型: %s\n", task)
+				}
+			}
+		} else if function == "mint" {
+			if task, ok := message["task"].(string); ok {
+				switch task {
+				case "collect":
+					s.mintEventGetService.ProcessTask(message)
+				default:
+					fmt.Printf("未知任务类型: %s\n", task)
+				}
+			}
+		} else if function == "swapV2" {
+			if task, ok := message["task"].(string); ok {
+				switch task {
+				case "collect":
+					s.swapV2EventGetService.ProcessTask(message)
+				default:
+					fmt.Printf("未知任务类型: %s\n", task)
+				}
+			}
+		} else if function == "swapV3" {
+			if task, ok := message["task"].(string); ok {
+				switch task {
+				case "collect":
+					s.swapV3EventGetService.ProcessTask(message)
+				default:
+					fmt.Printf("未知任务类型: %s\n", task)
+				}
+			}
+		} else if function == "sync" {
+			if task, ok := message["task"].(string); ok {
+				switch task {
+				case "collect":
+					s.syncEventGetService.ProcessTask(message)
+				default:
+					fmt.Printf("未知任务类型: %s\n", task)
+				}
+			}
+		} else if function == "commonEvent" {
+			if task, ok := message["task"].(string); ok {
+				switch task {
+				case "collect":
+					s.commonEventGetService.ProcessTask(message)
 				default:
 					fmt.Printf("未知任务类型: %s\n", task)
 				}

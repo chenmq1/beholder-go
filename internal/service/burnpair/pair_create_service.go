@@ -3,6 +3,7 @@ package burnpair
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/ethereum/go-ethereum"
@@ -12,15 +13,15 @@ import (
 	"github.com/jinzhu/gorm"
 
 	"github.com/beholder-daemon/internal/model/burnpair"
-	"github.com/beholder-daemon/internal/utils"
+	"github.com/beholder-daemon/internal/service/getEvent"
 )
 
 // PairCreateService 交易对创建服务
 type PairCreateService struct {
-	db           *gorm.DB
-	client       *ethclient.Client
-	web3Utils    *utils.Web3Utils
-	createCount  int
+	db          *gorm.DB
+	client      *ethclient.Client
+	mu          sync.Mutex
+	createCount int
 }
 
 // NewPairCreateService 创建PairCreateService实例
@@ -28,7 +29,6 @@ func NewPairCreateService(db *gorm.DB, client *ethclient.Client) *PairCreateServ
 	return &PairCreateService{
 		db:          db,
 		client:      client,
-		web3Utils:   utils.NewWeb3Utils(),
 		createCount: 0,
 	}
 }
@@ -94,9 +94,12 @@ func (s *PairCreateService) ProcessTask(message map[string]interface{}) error {
 		},
 	}
 
-	// 调用Web3Utils处理区块链事件
+	// 分段并发获取链上事件并交给 ProcessEvents 处理
 	ctx := context.Background()
-	if err := s.web3Utils.StepGetLogWithDefaultStep(ctx, s.client, int64(startBlock), int64(endBlock), filter, s); err != nil {
+	if _, _, err := getevent.ForwardConcurrent(ctx, s.client, int64(startBlock), int64(endBlock), filter, s.ProcessEvents, nil, getevent.ConcurrentConfig{
+		SegmentSize: 5000,
+		MaxWorkers:  10,
+	}); err != nil {
 		return fmt.Errorf("处理区块链事件失败: %w", err)
 	}
 
@@ -120,7 +123,7 @@ var currencyList = []string{
 }
 
 // ProcessEvents 处理区块链事件
-func (s *PairCreateService) ProcessEvents(logs []types.Log, original ethereum.FilterQuery) utils.EventProcessResult {
+func (s *PairCreateService) ProcessEvents(logs []types.Log, original ethereum.FilterQuery) getevent.Result {
 	for _, log := range logs {
 		// 解析事件数据
 		// 正确获取pair地址：从data的前32字节中取最后20字节（以太坊地址长度）
@@ -178,10 +181,12 @@ func (s *PairCreateService) ProcessEvents(logs []types.Log, original ethereum.Fi
 			continue
 		}
 
+		s.mu.Lock()
 		s.createCount++
+		s.mu.Unlock()
 	}
 
-	return utils.NewEventProcessResult()
+	return getevent.DefaultResult()
 }
 
 // containsCurrency 检查地址是否在货币列表中

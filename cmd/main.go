@@ -24,15 +24,6 @@ func main() {
 		log.Fatalf("Failed to initialize database: %v", err)
 	}
 
-	// 初始化Redis（可选）
-	log.Println("Initializing Redis...")
-	_, err = config.InitRedis()
-	if err != nil {
-		log.Printf("Warning: Failed to initialize Redis (optional): %v", err)
-	} else {
-		log.Println("Redis initialized successfully")
-	}
-
 	// 初始化Web3j客户端
 	log.Println("Initializing Web3j clients...")
 	_, err = config.InitWeb3j()

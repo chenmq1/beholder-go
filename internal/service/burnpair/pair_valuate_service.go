@@ -13,18 +13,16 @@ import (
 )
 
 type PairValuateService struct {
-	db                 *gorm.DB
-	bscClient          *utils.Web3Client
-	web3Utils          *utils.Web3Utils
+	db                    *gorm.DB
+	bscClient             *utils.Web3Client
 	pairValuateSubService *PairValuateSubService
 }
 
-func NewPairValuateService(db *gorm.DB, bscClient *utils.Web3Client, web3Utils *utils.Web3Utils) *PairValuateService {
+func NewPairValuateService(db *gorm.DB, bscClient *utils.Web3Client) *PairValuateService {
 	return &PairValuateService{
-		db:                 db,
-		bscClient:          bscClient,
-		web3Utils:          web3Utils,
-		pairValuateSubService: NewPairValuateSubService(db, bscClient, web3Utils),
+		db:                    db,
+		bscClient:             bscClient,
+		pairValuateSubService: NewPairValuateSubService(db, bscClient),
 	}
 }
 

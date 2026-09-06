@@ -12,6 +12,7 @@ import (
 	"github.com/jinzhu/gorm"
 
 	"github.com/beholder-daemon/internal/model/burnpair"
+	"github.com/beholder-daemon/internal/service/getEvent"
 	"github.com/beholder-daemon/internal/utils"
 )
 
@@ -30,14 +31,12 @@ var (
 type PairValuateSubService struct {
 	db        *gorm.DB
 	bscClient *utils.Web3Client
-	web3Utils *utils.Web3Utils
 }
 
-func NewPairValuateSubService(db *gorm.DB, bscClient *utils.Web3Client, web3Utils *utils.Web3Utils) *PairValuateSubService {
+func NewPairValuateSubService(db *gorm.DB, bscClient *utils.Web3Client) *PairValuateSubService {
 	return &PairValuateSubService{
 		db:        db,
 		bscClient: bscClient,
-		web3Utils: web3Utils,
 	}
 }
 
@@ -143,10 +142,8 @@ func (s *PairValuateSubService) ProcessSubTaskWithSyncEvents(pairs []burnpair.Un
 		pairMap[addr] = &pairs[i]
 	}
 
-	// 构建过滤器
+	// 构建过滤器（区块范围由 getevent.Backward 按步长管理，无需设置）
 	filter := ethereum.FilterQuery{
-		FromBlock: big.NewInt(int64(fromBlock)),
-		ToBlock:   big.NewInt(int64(toBlock)),
 		Addresses: addresses,
 		Topics:    [][]common.Hash{{common.HexToHash(SYNC_EVENT_TOPIC)}},
 	}
@@ -156,8 +153,8 @@ func (s *PairValuateSubService) ProcessSubTaskWithSyncEvents(pairs []burnpair.Un
 		pairMap: pairMap,
 	}
 
-	// 使用 stepBackwardGetLog 处理事件
-	s.web3Utils.StepBackwardGetLogWithDefaultStep(s.bscClient.Ctx, s.bscClient.EthClient, int64(fromBlock), int64(toBlock), filter, eventProcessor)
+	// 反向分步获取事件并交给 SyncEventProcessor 处理
+	getevent.Backward(s.bscClient.Ctx, s.bscClient.EthClient, int64(fromBlock), int64(toBlock), filter, eventProcessor.ProcessEvents, getevent.DefaultStepLength)
 
 	// 统计有价值的交易对数量
 	valuable := 0
@@ -176,10 +173,8 @@ type SyncEventProcessor struct {
 }
 
 // ProcessEvents 处理事件
-func (p *SyncEventProcessor) ProcessEvents(logs []types.Log, original ethereum.FilterQuery) utils.EventProcessResult {
-	result := utils.EventProcessResult{
-		ShouldContinue: true,
-	}
+func (p *SyncEventProcessor) ProcessEvents(logs []types.Log, original ethereum.FilterQuery) getevent.Result {
+	result := getevent.DefaultResult()
 
 	if len(logs) == 0 {
 		return result

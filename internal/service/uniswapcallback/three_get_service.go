@@ -4,13 +4,13 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"math/big"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/beholder-daemon/internal/model/uniswapcallback"
+	"github.com/beholder-daemon/internal/service/getEvent"
 	"github.com/beholder-daemon/internal/utils"
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
@@ -18,50 +18,25 @@ import (
 	"github.com/jinzhu/gorm"
 )
 
-const MAX_BLOCK_PER_TASK = 24000
+const MAX_BLOCK_PER_TASK = 200000
 
-type ThreeGetSubService struct {
-	db        *gorm.DB
-	clients   map[string]*utils.Web3Client
-	web3Utils *utils.Web3Utils
+type ThreeGetService struct {
+	db                   *gorm.DB
+	clients              map[string]*utils.Web3Client
+	swapCallbackTaskRepo *SwapCallbackTaskRepository
+	threeSenderRepo      *ThreeSenderRepository
 }
 
-func NewThreeGetSubService(db *gorm.DB, clients map[string]*utils.Web3Client, web3Utils *utils.Web3Utils) *ThreeGetSubService {
-	return &ThreeGetSubService{
-		db:        db,
-		clients:   clients,
-		web3Utils: web3Utils,
+func NewThreeGetService(db *gorm.DB, clients map[string]*utils.Web3Client) *ThreeGetService {
+	return &ThreeGetService{
+		db:                   db,
+		clients:              clients,
+		swapCallbackTaskRepo: NewSwapCallbackTaskRepository(db),
+		threeSenderRepo:      NewThreeSenderRepository(db),
 	}
 }
 
-func (s *ThreeGetSubService) processSubTask(chainId int, fromBlock, toBlock int64, topic string) (map[string]bool, error) {
-	client := s.getClientByChainId(chainId)
-	if client == nil {
-		return nil, fmt.Errorf("找不到 chainId %d 的客户端", chainId)
-	}
-
-	result := make(map[string]bool)
-	var mu sync.Mutex
-
-	filter := ethereum.FilterQuery{
-		FromBlock: big.NewInt(fromBlock),
-		ToBlock:   big.NewInt(toBlock),
-		Topics:    [][]common.Hash{{common.HexToHash(topic)}},
-	}
-
-	err := s.web3Utils.StepBackwardGetLogWithDefaultStep(
-		context.Background(),
-		client.EthClient,
-		int64(fromBlock),
-		int64(toBlock),
-		filter,
-		&syncEventProcessor{result: &result, mu: &mu},
-	)
-
-	return result, err
-}
-
-func (s *ThreeGetSubService) getClientByChainId(chainId int) *utils.Web3Client {
+func (s *ThreeGetService) getClientByChainId(chainId int) *utils.Web3Client {
 	chainName := ""
 	switch chainId {
 	case 1:
@@ -82,46 +57,6 @@ func (s *ThreeGetSubService) getClientByChainId(chainId int) *utils.Web3Client {
 		return client
 	}
 	return nil
-}
-
-type syncEventProcessor struct {
-	result *map[string]bool
-	mu     *sync.Mutex
-}
-
-func (p *syncEventProcessor) ProcessEvents(logs []types.Log, original ethereum.FilterQuery) utils.EventProcessResult {
-	for _, l := range logs {
-		if len(l.Topics) < 2 {
-			continue
-		}
-		sender := common.BytesToAddress(l.Topics[1].Bytes()[12:]).Hex()
-		sender = strings.ToLower(strings.TrimPrefix(sender, "0x"))
-
-		p.mu.Lock()
-		(*p.result)[sender] = true
-		p.mu.Unlock()
-	}
-	return utils.EventProcessResult{ShouldContinue: true}
-}
-
-type ThreeGetService struct {
-	db                    *gorm.DB
-	threeGetSubService    *ThreeGetSubService
-	swapCallbackTaskRepo  *SwapCallbackTaskRepository
-	threeSenderRepo       *ThreeSenderRepository
-	clients               map[string]*utils.Web3Client
-	web3Utils             *utils.Web3Utils
-}
-
-func NewThreeGetService(db *gorm.DB, clients map[string]*utils.Web3Client, web3Utils *utils.Web3Utils) *ThreeGetService {
-	return &ThreeGetService{
-		db:                   db,
-		threeGetSubService:   NewThreeGetSubService(db, clients, web3Utils),
-		swapCallbackTaskRepo: NewSwapCallbackTaskRepository(db),
-		threeSenderRepo:      NewThreeSenderRepository(db),
-		clients:              clients,
-		web3Utils:            web3Utils,
-	}
 }
 
 func (s *ThreeGetService) ProcessTask(message map[string]interface{}) {
@@ -155,7 +90,7 @@ func (s *ThreeGetService) ProcessTask(message map[string]interface{}) {
 	}
 	record.CallbackKey = callbackKey
 
-	client := s.threeGetSubService.getClientByChainId(chainId)
+	client := s.getClientByChainId(chainId)
 	if client == nil {
 		log.Printf("找不到 chainId %d 的客户端", chainId)
 		record.Status = -1
@@ -219,35 +154,45 @@ func (s *ThreeGetService) ProcessTask(message map[string]interface{}) {
 
 	log.Printf("处理threeGet任务: chainId=%d, callbackKey=%s, startBlock=%d, endBlock=%d", chainId, callbackKey, startBlock, endBlock)
 
-	segmentSize := uint64(MAX_BLOCK_PER_TASK / 18)
-	var wg sync.WaitGroup
-	var mu sync.Mutex
 	allSenders := make(map[string]bool)
+	var mu sync.Mutex
 
-	topic := sig.Topic
-	for segStart := startBlock; segStart < endBlock; segStart += segmentSize {
-		segEnd := segStart + segmentSize
-		if segEnd > endBlock {
-			segEnd = endBlock
-		}
-
-		wg.Add(1)
-		go func(segStart, segEnd uint64) {
-			defer wg.Done()
-			result, err := s.threeGetSubService.processSubTask(chainId, int64(segStart), int64(segEnd), topic)
-			if err != nil {
-				log.Printf("处理子任务失败: %v", err)
-				return
+	// 事件处理函数：提取每个事件 Topics[1] 中的 sender 地址（并发调用，内部已加锁）
+	process := func(logs []types.Log, original ethereum.FilterQuery) getevent.Result {
+		for _, l := range logs {
+			if len(l.Topics) < 2 {
+				continue
 			}
+			sender := common.BytesToAddress(l.Topics[1].Bytes()[12:]).Hex()
+			sender = strings.ToLower(strings.TrimPrefix(sender, "0x"))
+
 			mu.Lock()
-			for sender := range result {
-				allSenders[sender] = true
-			}
+			allSenders[sender] = true
 			mu.Unlock()
-		}(segStart, segEnd)
+		}
+		return getevent.DefaultResult()
 	}
 
-	wg.Wait()
+	filter := ethereum.FilterQuery{
+		Topics: [][]common.Hash{{common.HexToHash(sig.Topic)}},
+	}
+
+	// 分段并发反向获取事件
+	if _, _, err := getevent.BackwardConcurrent(
+		context.Background(),
+		client.EthClient,
+		int64(startBlock),
+		int64(endBlock),
+		filter,
+		process,
+		nil,
+		getevent.ConcurrentConfig{
+			SegmentSize: 999,
+			MaxWorkers:  18,
+		},
+	); err != nil {
+		log.Printf("部分区块段处理失败: %v", err)
+	}
 
 	sendersLogged := len(allSenders)
 	log.Printf("total senders: %d", sendersLogged)

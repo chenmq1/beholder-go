@@ -1,13 +1,11 @@
 package config
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"time"
 
 	"github.com/ethereum/go-ethereum/ethclient"
-	"github.com/go-redis/redis/v8"
 	"github.com/jinzhu/gorm"
 	_ "github.com/jinzhu/gorm/dialects/mysql"
 	"github.com/spf13/viper"
@@ -18,7 +16,6 @@ import (
 type Config struct {
 	App      AppConfig      `mapstructure:"app"`
 	MySQL    MySQLConfig    `mapstructure:"mysql"`
-	Redis    RedisConfig    `mapstructure:"redis"`
 	RabbitMQ RabbitMQConfig `mapstructure:"rabbitmq"`
 	Web3j    Web3jConfig    `mapstructure:"web3j"`
 	Task     TaskConfig     `mapstructure:"task"`
@@ -39,14 +36,6 @@ type MySQLConfig struct {
 	Password string `mapstructure:"password"`
 	Database string `mapstructure:"database"`
 	SSLMode  string `mapstructure:"ssl_mode"`
-}
-
-// RedisConfig Redis配置
-type RedisConfig struct {
-	Host    string        `mapstructure:"host"`
-	Port    int           `mapstructure:"port"`
-	DB      int           `mapstructure:"db"`
-	Timeout time.Duration `mapstructure:"timeout"`
 }
 
 // RabbitMQConfig RabbitMQ配置
@@ -114,27 +103,6 @@ func InitDB() (*gorm.DB, error) {
 
 	log.Println("Database connected successfully")
 	return db, nil
-}
-
-// InitRedis 初始化Redis客户端
-func InitRedis() (*redis.Client, error) {
-	redisClient := redis.NewClient(&redis.Options{
-		Addr:         fmt.Sprintf("%s:%d", viper.GetString("redis.host"), viper.GetInt("redis.port")),
-		Password:     "", // 如果没有密码，留空
-		DB:           viper.GetInt("redis.db"),
-		DialTimeout:  viper.GetDuration("redis.timeout"),
-		ReadTimeout:  viper.GetDuration("redis.timeout"),
-		WriteTimeout: viper.GetDuration("redis.timeout"),
-	})
-
-	// 测试连接
-	ctx := context.Background()
-	if _, err := redisClient.Ping(ctx).Result(); err != nil {
-		return nil, fmt.Errorf("failed to connect to Redis: %w", err)
-	}
-
-	log.Println("Redis connected successfully")
-	return redisClient, nil
 }
 
 // InitWeb3j 初始化Web3j客户端
