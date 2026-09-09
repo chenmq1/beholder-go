@@ -10,23 +10,27 @@ import (
 	modelcommon "github.com/beholder-daemon/internal/model/common"
 	"github.com/beholder-daemon/internal/service/common"
 	"github.com/beholder-daemon/internal/service/common/approve"
+	"github.com/beholder-daemon/internal/service/common/paircreated"
 	"github.com/beholder-daemon/internal/service/common/swapv2"
 	"github.com/beholder-daemon/internal/service/common/swapv3"
 	"github.com/beholder-daemon/internal/service/common/syncevent"
 	"github.com/beholder-daemon/internal/utils"
 )
 
-// NewEventGetService 创建组合事件收集服务，注册表当前含 approve / swapV2 / swapV3 / sync。
+// NewEventGetService 创建组合事件收集服务，注册表当前含 approve / pairCreated / swapV2 / swapV3 / sync。
 // 以后新增可组合事件：model/common 加模型（主键即去重键）→ 建表 → 注册表加一行。
+// 注意：仅 topic0 过滤即可定位的事件才能进注册表（组合模式按 topic0 OR 拉取）；
+// 需要 topic1/topic2 子过滤的事件（如 mint/burn）须走独立服务。
 func NewEventGetService(db *gorm.DB, clients map[string]*utils.Web3Client) *common.EventCollectService {
 	return common.NewEventCollectService(db, clients, common.EventCollectConfig{
 		TaskType:    "commonEventGet",
 		CallbackKey: "commonEvent",
 		EventRegistry: map[string]common.EventDef{
-			"approve": {Topic0: approve.ApprovalEventTopic, Model: &modelcommon.ApprovalEvent{}},
-			"swapV2":  {Topic0: swapv2.SwapV2EventTopic, Model: &modelcommon.SwapV2Event{}},
-			"swapV3":  {Topic0: swapv3.SwapV3EventTopic, Model: &modelcommon.SwapV3Event{}},
-			"sync":    {Topic0: syncevent.SyncEventTopic, Model: &modelcommon.SyncEvent{}},
+			"approve":     {Topic0: approve.ApprovalEventTopic, Model: &modelcommon.ApprovalEvent{}},
+			"pairCreated": {Topic0: paircreated.PairCreatedEventTopic, Model: &modelcommon.PairCreatedEvent{}},
+			"swapV2":      {Topic0: swapv2.SwapV2EventTopic, Model: &modelcommon.SwapV2Event{}},
+			"swapV3":      {Topic0: swapv3.SwapV3EventTopic, Model: &modelcommon.SwapV3Event{}},
+			"sync":        {Topic0: syncevent.SyncEventTopic, Model: &modelcommon.SyncEvent{}},
 		},
 	})
 }

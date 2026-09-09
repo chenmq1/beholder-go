@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>函数调用监控（Watchlist）</title>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+            margin: 0; padding: 24px; background: #f5f7fa; color: #1f2d3d;
+        }
+        nav.top { background: #1f2d3d; padding: 0 24px; margin: -24px -24px 20px; height: 48px;
+            display: flex; align-items: center; gap: 8px; }
+        nav.top a { color: #c0c4cc; text-decoration: none; padding: 6px 14px; border-radius: 4px;
+            font-size: 14px; }
+        nav.top a:hover { background: rgba(255,255,255,.1); color: #fff; }
+        nav.top a.active { background: #409eff; color: #fff; }
+        h1 { font-size: 20px; margin: 0 0 16px; }
+        .card { background: #fff; border-radius: 8px; padding: 20px;
+            box-shadow: 0 1px 4px rgba(0,0,0,.08); margin-bottom: 20px; }
+        .toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+        button {
+            background: #409eff; color: #fff; border: none; border-radius: 4px;
+            padding: 9px 20px; font-size: 14px; cursor: pointer; height: 36px;
+        }
+        button:hover { background: #66b1ff; }
+        button:disabled { background: #a0cfff; cursor: not-allowed; }
+        .hint { font-size: 12px; color: #909399; }
+        .meta { font-size: 13px; color: #606266; margin-bottom: 12px; }
+        table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid #ebeef5;
+            vertical-align: top; }
+        th { background: #fafafa; color: #606266; font-weight: 600; position: sticky; top: 0; z-index: 1; }
+        td.addr { font-family: ui-monospace, Consolas, monospace; font-size: 12px; white-space: nowrap; }
+        td.num { text-align: right; font-family: ui-monospace, Consolas, monospace; }
+        .badge.ok { background: #f0f9eb; color: #67c23a; padding: 1px 7px; border-radius: 3px; font-size: 12px; }
+        .badge.err { background: #fef0f0; color: #f56c6c; padding: 1px 7px; border-radius: 3px; font-size: 12px; }
+        .badge.match { background: #fdf6ec; color: #e6a23c; padding: 1px 7px; border-radius: 3px; font-size: 12px; }
+        .status { padding: 24px; text-align: center; color: #909399; font-size: 14px; }
+        .error { color: #f56c6c; }
+        .table-wrap { overflow: auto; border: 1px solid #ebeef5; border-radius: 4px; max-height: 70vh; }
+    </style>
+</head>
+<body>
+    <nav class="top">
+        <a href="/approval">即时 Approval</a>
+        <a href="/pair-sync-burn">Pair·Sync·Burn</a>
+        <a href="/send-event">发送任务</a>
+        <a href="/watchlist" class="active">函数监控</a>
+    </nav>
+    <h1>函数调用监控（function_call）</h1>
+    <div class="card">
+        <div class="toolbar">
+            <button id="refreshBtn" onclick="refreshAll()">刷新全部</button>
+            <button id="reloadBtn" onclick="loadList()" style="background:#909399;">重新加载</button>
+            <span class="hint">「刷新全部」会对每行发起 eth_call 并回写 last_value/last_block</span>
+        </div>
+        <div class="meta" id="meta"></div>
+        <div class="status" id="status">加载中...</div>
+        <div class="table-wrap" id="tableWrap" style="display:none;">
+            <table>
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>chain</th>
+                        <th>address</th>
+                        <th>function</th>
+                        <th>argTypes</th>
+                        <th>argumentStr</th>
+                        <th>returnType</th>
+                        <th>expect</th>
+                        <th>lastValue</th>
+                        <th style="text-align:right;">lastBlock</th>
+                        <th>state</th>
+                        <th>comment</th>
+                    </tr>
+                </thead>
+                <tbody id="tbody"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        const CHAIN_NAMES = {1:"ethereum",2:"bsc",3:"polygon",4:"arbitrum",5:"base",6:"optimism"};
+        const EXPLORER = {1:"https://etherscan.io",2:"https://bscscan.com",3:"https://polygonscan.com",
+            4:"https://arbiscan.io",5:"https://basescan.org",6:"https://optimistic.etherscan.io"};
+        let listData = [];
+
+        function escapeHtml(s) {
+            if (s === null || s === undefined) return "";
+            return String(s).replace(/[&<>"']/g, m => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]));
+        }
+
+        function addrLink(addr, chainId) {
+            if (!addr) return `<td class="addr"></td>`;
+            const ex = EXPLORER[chainId] || "";
+            return `<td class="addr"><a href="${ex}/address/${addr}" target="_blank" title="${addr}">${addr}</a></td>`;
+        }
+
+        function render() {
+            const tbody = document.getElementById("tbody");
+            tbody.innerHTML = listData.map((e, i) => {
+                const chainName = CHAIN_NAMES[e.chainId] || e.chainId;
+                const stateCell = e._state
+                    ? (e._state.ok
+                        ? `<span class="badge ok">OK</span>${e._state.matched ? ' <span class="badge match">匹配</span>' : ' <span class="badge err">不符</span>'}`
+                        : `<span class="badge err">ERR</span>`)
+                    : '';
+                return `
+                    <tr>
+                        <td>${i+1}</td>
+                        <td>${chainName} (${e.chainId})</td>
+                        ${addrLink(e.address, e.chainId)}
+                        <td>${escapeHtml(e.functionName)}</td>
+                        <td>${escapeHtml(e.argTypes)}</td>
+                        <td class="addr" title="${escapeHtml(e.argumentStr)}">${escapeHtml(e.argumentStr)}</td>
+                        <td>${escapeHtml(e.returnValueType)}</td>
+                        <td class="addr" title="${escapeHtml(e.expectReturnValue)}">${escapeHtml(e.expectReturnValue)}</td>
+                        <td class="addr" title="${escapeHtml(e.lastValue)}">${escapeHtml(e.lastValue)}</td>
+                        <td class="num">${e.lastBlock || 0}</td>
+                        <td>${stateCell}</td>
+                        <td>${escapeHtml(e.comment)}</td>
+                    </tr>`;
+            }).join("");
+        }
+
+        async function loadList() {
+            document.getElementById("status").style.display = "block";
+            document.getElementById("tableWrap").style.display = "none";
+            try {
+                const resp = await fetch("/api/watchlist/function-calls");
+                const data = await resp.json();
+                if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+                listData = (data.content || []).map(e => ({...e, _state: null}));
+                document.getElementById("status").style.display = "none";
+                document.getElementById("tableWrap").style.display = "block";
+                document.getElementById("meta").textContent = `共 ${listData.length} 条`;
+                render();
+            } catch (err) {
+                document.getElementById("status").className = "status error";
+                document.getElementById("status").textContent = "加载失败：" + err.message;
+            }
+        }
+
+        async function refreshAll() {
+            const btn = document.getElementById("refreshBtn");
+            btn.disabled = true;
+            btn.textContent = "刷新中...";
+            document.getElementById("meta").textContent = "正在调用...";
+            try {
+                const resp = await fetch("/api/watchlist/function-calls/refresh", {method: "POST"});
+                const data = await resp.json();
+                if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+                // 用 refresh 返回的 results 更新状态
+                const resMap = {};
+                (data.results || []).forEach(r => resMap[r.id] = r);
+                listData = listData.map(e => {
+                    const r = resMap[e.id];
+                    if (r) {
+                        return {...e,
+                            lastValue: r.lastValue || e.lastValue,
+                            lastBlock: r.lastBlock || e.lastBlock,
+                            _state: {ok: r.ok, matched: r.matched, error: r.error}
+                        };
+                    }
+                    return e;
+                });
+                document.getElementById("meta").textContent =
+                    `刷新完成：${data.total} 条；成功 ${listData.filter(e => e._state && e._state.ok).length}，失败 ${listData.filter(e => e._state && !e._state.ok).length}`;
+                render();
+            } catch (err) {
+                document.getElementById("meta").textContent = "刷新失败：" + err.message;
+            } finally {
+                btn.disabled = false;
+                btn.textContent = "刷新全部";
+            }
+        }
+
+        loadList();
+    </script>
+</body>
+</html>

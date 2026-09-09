@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>发送事件收集任务</title>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+            margin: 0; padding: 24px; background: #f5f7fa; color: #1f2d3d;
+        }
+        nav.top { background: #1f2d3d; padding: 0 24px; margin: -24px -24px 20px; height: 48px;
+            display: flex; align-items: center; gap: 8px; }
+        nav.top a { color: #c0c4cc; text-decoration: none; padding: 6px 14px; border-radius: 4px;
+            font-size: 14px; }
+        nav.top a:hover { background: rgba(255,255,255,.1); color: #fff; }
+        nav.top a.active { background: #409eff; color: #fff; }
+        h1 { font-size: 20px; margin: 0 0 16px; }
+        .card { background: #fff; border-radius: 8px; padding: 20px;
+            box-shadow: 0 1px 4px rgba(0,0,0,.08); margin-bottom: 20px; }
+        .form-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; }
+        .field { display: flex; flex-direction: column; gap: 4px; }
+        .field.grow { flex: 1; min-width: 260px; }
+        label { font-size: 12px; color: #606266; }
+        input, select {
+            border: 1px solid #dcdfe6; border-radius: 4px; padding: 8px 10px;
+            font-size: 14px; outline: none; background: #fff;
+        }
+        input:focus, select:focus { border-color: #409eff; }
+        button {
+            background: #409eff; color: #fff; border: none; border-radius: 4px;
+            padding: 9px 20px; font-size: 14px; cursor: pointer; height: 36px;
+        }
+        button:hover { background: #66b1ff; }
+        button:disabled { background: #a0cfff; cursor: not-allowed; }
+        .hint { font-size: 12px; color: #909399; margin-top: 4px; }
+        .events-box { display: flex; flex-wrap: wrap; gap: 12px; padding: 4px 0; }
+        .events-box label { display: inline-flex; align-items: center; gap: 6px;
+            font-size: 14px; color: #1f2d3d; cursor: pointer; }
+        .events-box input[type=checkbox] { width: 16px; height: 16px; }
+        .events-box.disabled label { color: #c0c4cc; cursor: not-allowed; }
+        .events-box.disabled input { background: #f5f7fa; }
+        .msg-preview { margin-top: 16px; padding: 12px; background: #1f2d3d; color: #67c23a;
+            border-radius: 4px; font-family: ui-monospace, Consolas, monospace; font-size: 13px;
+            white-space: pre-wrap; word-break: break-all; }
+        .result { margin-top: 12px; font-size: 14px; }
+        .result.ok { color: #67c23a; }
+        .result.err { color: #f56c6c; }
+    </style>
+</head>
+<body>
+    <nav class="top">
+        <a href="/approval">即时 Approval</a>
+        <a href="/pair-sync-burn">Pair·Sync·Burn</a>
+        <a href="/send-event" class="active">发送任务</a>
+        <a href="/watchlist">函数监控</a>
+    </nav>
+    <h1>发送事件收集任务到 RabbitMQ</h1>
+    <div class="card">
+        <div class="form-row">
+            <div class="field">
+                <label>function</label>
+                <select id="function">
+                    <option value="commonEvent">commonEvent（组合，多选事件）</option>
+                    <option value="approve">approve（独立，授权）</option>
+                    <option value="mint">mint（独立，铸币）</option>
+                    <option value="burn">burn（独立，外部销毁）</option>
+                    <option value="pairCreated">pairCreated（独立，建对）</option>
+                    <option value="swapV2">swapV2（独立，V2兑换）</option>
+                    <option value="swapV3">swapV3（独立，V3兑换）</option>
+                    <option value="sync">sync（独立，储备同步）</option>
+                </select>
+            </div>
+            <div class="field">
+                <label>chainId</label>
+                <select id="chainId">
+                    <option value="1">1 = ethereum</option>
+                    <option value="2" selected>2 = bsc</option>
+                    <option value="3">3 = polygon</option>
+                    <option value="4">4 = arbitrum</option>
+                    <option value="5">5 = base</option>
+                    <option value="6">6 = optimism</option>
+                </select>
+            </div>
+            <div class="field">
+                <label>startBlock（可选，留空=增量续扫）</label>
+                <input id="startBlock" type="text" placeholder="例：120330184">
+            </div>
+            <div class="field">
+                <label>endBlock（可选，留空=最新）</label>
+                <input id="endBlock" type="text" placeholder="例：120407424">
+            </div>
+        </div>
+        <div class="field" style="margin-top: 16px;">
+            <label>events（仅 commonEvent 启用；多选）</label>
+            <div class="events-box" id="events">
+                <label><input type="checkbox" value="approve"> approve</label>
+                <label><input type="checkbox" value="pairCreated"> pairCreated</label>
+                <label><input type="checkbox" value="swapV2"> swapV2</label>
+                <label><input type="checkbox" value="swapV3"> swapV3</label>
+                <label><input type="checkbox" value="sync"> sync</label>
+            </div>
+            <div class="hint">来自 commonevent 注册表；burn 走独立 function，不在此列。</div>
+        </div>
+        <div class="form-row" style="margin-top: 16px;">
+            <button id="sendBtn" onclick="sendTask()">发送任务</button>
+        </div>
+        <div class="result" id="result"></div>
+        <div class="msg-preview" id="preview"></div>
+    </div>
+
+    <script>
+        // 常量
+        const COMMON_EVENTS = ["approve", "pairCreated", "swapV2", "swapV3", "sync"];
+
+        // 实时预览将要发送的消息体
+        function buildMessage() {
+            const fn = document.getElementById("function").value;
+            const chainId = document.getElementById("chainId").value;
+            const sb = document.getElementById("startBlock").value.trim();
+            const eb = document.getElementById("endBlock").value.trim();
+            const msg = { function: fn, task: "collect", chainId: chainId };
+            if (sb) msg.startBlock = sb;
+            if (eb) msg.endBlock = eb;
+            if (fn === "commonEvent") {
+                const picked = COMMON_EVENTS.filter(v => document.querySelector(`#events input[value="${v}"]`).checked);
+                msg.events = picked.join(",");
+            }
+            return msg;
+        }
+
+        // 切换 function 时启用/禁用 events 多选
+        function syncEventsState() {
+            const fn = document.getElementById("function").value;
+            const box = document.getElementById("events");
+            const disabled = fn !== "commonEvent";
+            box.classList.toggle("disabled", disabled);
+            box.querySelectorAll("input").forEach(cb => cb.disabled = disabled);
+        }
+
+        // 渲染预览
+        function renderPreview() {
+            document.getElementById("preview").textContent = JSON.stringify(buildMessage(), null, 2);
+        }
+
+        // 发送
+        async function sendTask() {
+            const msg = buildMessage();
+            const resultEl = document.getElementById("result");
+            const btn = document.getElementById("sendBtn");
+            btn.disabled = true;
+            resultEl.className = "result";
+            resultEl.textContent = "发送中...";
+            try {
+                const resp = await fetch("/api/tasks/send", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(msg)
+                });
+                const data = await resp.json();
+                if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+                resultEl.className = "result ok";
+                resultEl.textContent = "✓ " + data.message;
+            } catch (err) {
+                resultEl.className = "result err";
+                resultEl.textContent = "✗ " + err.message;
+            } finally {
+                btn.disabled = false;
+            }
+        }
+
+        // 事件绑定
+        ["function", "chainId", "startBlock", "endBlock"].forEach(id => {
+            document.getElementById(id).addEventListener("input", () => { syncEventsState(); renderPreview(); });
+            document.getElementById(id).addEventListener("change", () => { syncEventsState(); renderPreview(); });
+        });
+        document.querySelectorAll("#events input").forEach(cb => cb.addEventListener("change", renderPreview));
+
+        // 初始化
+        syncEventsState();
+        renderPreview();
+    </script>
+</body>
+</html>

@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pair · Sync · Burn 视图</title>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+            margin: 0; padding: 24px; background: #f5f7fa; color: #1f2d3d;
+        }
+        h1 { font-size: 20px; margin: 0 0 16px; }
+        .card {
+            background: #fff; border-radius: 8px; padding: 20px;
+            box-shadow: 0 1px 4px rgba(0,0,0,.08); margin-bottom: 20px;
+        }
+        .form-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; }
+        .field { display: flex; flex-direction: column; gap: 4px; }
+        label { font-size: 12px; color: #606266; }
+        select, button {
+            border: 1px solid #dcdfe6; border-radius: 4px; padding: 8px 10px;
+            font-size: 14px; outline: none; background: #fff;
+        }
+        select:focus { border-color: #409eff; }
+        button {
+            background: #409eff; color: #fff; border: none; cursor: pointer; height: 36px;
+        }
+        button:hover { background: #66b1ff; }
+        button:disabled { background: #a0cfff; cursor: not-allowed; }
+        .hint { font-size: 12px; color: #909399; margin-top: 4px; }
+        .meta { font-size: 13px; color: #606266; margin-bottom: 12px; }
+        .meta b { color: #1f2d3d; }
+        table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid #ebeef5; vertical-align: top; }
+        th { background: #fafafa; color: #606266; font-weight: 600; position: sticky; top: 0; z-index: 1; }
+        td.addr { font-family: ui-monospace, Consolas, monospace; font-size: 12px; white-space: nowrap; }
+        td.num { text-align: right; font-family: ui-monospace, Consolas, monospace; }
+        a.tx { color: #409eff; text-decoration: none; }
+        a.tx:hover { text-decoration: underline; }
+        .status { padding: 24px; text-align: center; color: #909399; font-size: 14px; }
+        .error { color: #f56c6c; }
+        .table-wrap { overflow: auto; border: 1px solid #ebeef5; border-radius: 4px; }
+        .pager { display: flex; align-items: center; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+        .pager .info { font-size: 13px; color: #606266; }
+        .pager button { height: 32px; padding: 6px 14px; }
+        .pager button:disabled { background: #c0c4cc; cursor: not-allowed; }
+        button.mini { height: 26px; padding: 3px 10px; font-size: 12px; }
+        button.mini:hover { background: #66b1ff; }
+        button.mini.save { background: #67c23a; }
+        button.mini.save:hover { background: #85cf60; }
+        button.mini.cancel { background: #909399; }
+        button.mini.cancel:hover { background: #a6a9ad; }
+        td input.cell-edit { width: 100%; box-sizing: border-box; font-size: 12px;
+            padding: 4px 6px; border: 1px solid #dcdfe6; border-radius: 4px; outline: none; }
+        td input.cell-edit:focus { border-color: #409eff; }
+        td input.cell-edit.num-edit { width: 70px; text-align: right; }
+        td .input-preview { display: inline-block; max-width: 260px; overflow: hidden;
+            text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+        a.tx .alias-badge { display: inline-block; padding: 1px 7px; border-radius: 3px;
+            background: #fdf6ec; color: #e6a23c; font-weight: 700; font-size: 12px;
+            border: 1px solid #faecd8; font-family: -apple-system, "Segoe UI", sans-serif; }
+        a.tx .reserve-amt { font-size: 12px; color: #67c23a; font-weight: 600;
+            font-family: ui-monospace, Consolas, monospace; }
+        nav.top { background: #1f2d3d; padding: 0 24px; margin: -24px -24px 20px; height: 48px;
+            display: flex; align-items: center; gap: 8px; }
+        nav.top a { color: #c0c4cc; text-decoration: none; padding: 6px 14px; border-radius: 4px;
+            font-size: 14px; }
+        nav.top a:hover { background: rgba(255,255,255,.1); color: #fff; }
+        nav.top a.active { background: #409eff; color: #fff; }
+    </style>
+</head>
+<body>
+    <nav class="top">
+        <a href="/approval">即时 Approval</a>
+        <a href="/pair-sync-burn" class="active">Pair·Sync·Burn</a>
+        <a href="/send-event">发送任务</a>
+        <a href="/watchlist">函数监控</a>
+    </nav>
+    <h1>Pair · Sync · Burn 视图（v_pair_sync_burn）</h1>
+    <div class="card">
+        <div class="form-row">
+            <div class="field">
+                <label>链</label>
+                <select id="chainId">
+                    <option value="1">1 · Ethereum</option>
+                    <option value="2" selected>2 · BSC</option>
+                    <option value="3">3 · Polygon</option>
+                    <option value="4">4 · Arbitrum</option>
+                    <option value="5">5 · Base</option>
+                    <option value="6">6 · Optimism</option>
+                </select>
+            </div>
+            <div class="field">
+                <label>排序（倒序）</label>
+                <select id="sortBy">
+                    <option value="createdBlock" selected>createdBlock</option>
+                    <option value="syncBlock">syncBlock</option>
+                    <option value="syncCount">syncCount</option>
+                    <option value="burnCount">burnCount</option>
+                </select>
+            </div>
+            <div class="field">
+                <button id="queryBtn" onclick="loadPage(0)">查询</button>
+            </div>
+        </div>
+        <div class="hint">默认只看 BSC；100 条/页；地址不缩写；txHash 链接到 Phalcon。</div>
+    </div>
+
+    <div class="card">
+        <div id="meta" class="meta" style="display:none;"></div>
+        <div id="status" class="status">选择参数后点击查询</div>
+        <div class="table-wrap" id="tableWrap" style="display:none;">
+            <table>
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>pairAddress</th>
+                        <th>token0</th>
+                        <th>token1</th>
+                        <th style="text-align:right;">createdBlock</th>
+                        <th style="text-align:right;">syncBlock</th>
+                        <th style="text-align:right;">syncCount</th>
+                        <th style="text-align:right;">burnCount</th>
+                        <th>burnHash</th>
+                        <th style="text-align:right;">status</th>
+                        <th>input</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody id="tbody"></tbody>
+            </table>
+        </div>
+        <div class="pager" id="pager" style="display:none;">
+            <button id="prevBtn" onclick="loadPage(state.page - 1)">上一页</button>
+            <button id="nextBtn" onclick="loadPage(state.page + 1)">下一页</button>
+            <span class="info" id="pageInfo"></span>
+        </div>
+    </div>
+
+<script>
+    // Phalcon 链名映射
+    const phalconChainByChain = {
+        1: "ethereum",
+        2: "bsc",
+        3: "polygon",
+        4: "arbitrum",
+        5: "base",
+        6: "optimism"
+    };
+    // 地址浏览器（地址列用）
+    const explorerByChain = {
+        1: "https://etherscan.io",
+        2: "https://bscscan.com",
+        3: "https://polygonscan.com",
+        4: "https://arbiscan.io",
+        5: "https://basescan.org",
+        6: "https://optimistic.etherscan.io"
+    };
+
+    // 全局状态
+    const state = { page: 0, size: 100, total: 0, chainId: 2, sortBy: "createdBlock", offset: 0, content: [] };
+    // 当前编辑行的 pairAddress（同一时刻只允许编辑一行）
+    let editingAddr = null;
+
+    // 地址列：完整地址 + 浏览器链接（不缩写）
+    function addrCell(addr, chainId) {
+        if (!addr) return `<td class="addr"></td>`;
+        const explorer = explorerByChain[chainId] || "";
+        return `<td class="addr"><a class="tx" href="${explorer}/address/${addr}" target="_blank" title="${addr}">${addr}</a></td>`;
+    }
+
+    // txHash 列：完整 hash + Phalcon 链接
+    function hashCell(hash, chainId) {
+        if (!hash) return `<td class="addr"></td>`;
+        const phalconChain = phalconChainByChain[chainId] || "ethereum";
+        const href = `https://app.blocksec.com/phalcon/explorer/tx/${phalconChain}/${hash}?line=0`;
+        return `<td class="addr"><a class="tx" href="${href}" target="_blank" title="${hash}">${hash}</a></td>`;
+    }
+
+    // token 列：命中 token_alias 时显示别名（badge），否则显示完整地址；链接指向浏览器，title 悬停看完整地址
+    // 把 reserve 大整数字符串除以 10^decimals，精确到小数点后两位
+    // 用 BigInt 避免 Number 精度丢失；decimals 为 null/0 或 reserve 为空时返回 null
+    function formatReserve(reserve, decimals) {
+        if (!reserve || decimals == null || decimals === undefined) return null;
+        const d = Number(decimals);
+        if (d <= 0) return null;
+        try {
+            const n = BigInt(reserve);
+            if (n <= 0n) return null;
+            const divisor = 10n ** BigInt(d);
+            const scaled = n * 100n / divisor; // 保留两位小数的整数
+            const intPart = scaled / 100n;
+            const decPart = scaled % 100n;
+            return `${intPart}.${String(decPart).padStart(2, '0')}`;
+        } catch { return null; }
+    }
+
+    function tokenCell(addr, alias, chainId, reserve, decimals) {
+        if (!addr) return `<td class="addr"></td>`;
+        const explorer = explorerByChain[chainId] || "";
+        let label;
+        if (alias) {
+            const amount = formatReserve(reserve, decimals);
+            const amountHtml = amount ? ` <span class="reserve-amt">${amount}</span>` : '';
+            label = `<span class="alias-badge" title="${addr}">${escapeHtml(alias)}</span>${amountHtml}`;
+        } else {
+            label = addr;
+        }
+        return `<td class="addr"><a class="tx" href="${explorer}/address/${addr}" target="_blank" title="${addr}">${label}</a></td>`;
+    }
+
+    // HTML 转义（input 文本可能含特殊字符）
+    function escapeHtml(s) {
+        return String(s).replace(/[&<>"']/g, m => ({
+            "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+        }[m]));
+    }
+
+    // 渲染表格行（根据 editingAddr 决定该行是展示态还是编辑态）
+    function renderRows() {
+        const tbody = document.getElementById("tbody");
+        const rows = state.content.map((e, i) => {
+            const editing = editingAddr === e.pairAddress;
+            const status = (e.status === null || e.status === undefined) ? "" : e.status;
+            const input = (e.input === null || e.input === undefined) ? "" : e.input;
+            const pair = escapeHtml(e.pairAddress);
+            return `
+                <tr>
+                    <td>${state.offset + i + 1}</td>
+                    ${addrCell(e.pairAddress, state.chainId)}
+                    ${tokenCell(e.token0, e.token0Alias, state.chainId, e.reserve0, e.token0Decimal)}
+                    ${tokenCell(e.token1, e.token1Alias, state.chainId, e.reserve1, e.token1Decimal)}
+                    <td class="num">${e.createdBlock}</td>
+                    <td class="num">${e.syncBlock}</td>
+                    <td class="num">${e.syncCount}</td>
+                    <td class="num">${e.burnCount}</td>
+                    ${hashCell(e.burnHash, state.chainId)}
+                    ${editing ? `
+                        <td class="num"><input class="cell-edit num-edit" type="number" id="edit-status" value="${status}"></td>
+                        <td><input class="cell-edit" type="text" id="edit-input" value="${escapeHtml(input)}"></td>
+                    ` : `
+                        <td class="num">${status}</td>
+                        <td class="addr" title="${escapeHtml(input)}">${input ? `<span class="input-preview">${escapeHtml(input)}</span>` : ""}</td>
+                    `}
+                    ${editing ? `
+                            <button class="mini save" onclick="saveEdit('${pair}')">保存</button>
+                            <button class="mini cancel" onclick="cancelEdit()">取消</button>
+                        ` : `
+                            <button class="mini" onclick="startEdit('${pair}')">编辑</button>
+                        `}
+                    </td>
+                </tr>`;
+        }).join("");
+        tbody.innerHTML = rows;
+    }
+
+    // 进入编辑态并重绘当前页
+    function startEdit(pairAddress) {
+        editingAddr = pairAddress;
+        renderRows();
+    }
+
+    // 取消编辑：丢弃改动，按缓存数据重绘
+    function cancelEdit() {
+        editingAddr = null;
+        renderRows();
+    }
+
+    // 保存编辑：PATCH input 表（upsert），成功后刷新当前页
+    async function saveEdit(pairAddress) {
+        const statusRaw = document.getElementById("edit-status").value.trim();
+        const input = document.getElementById("edit-input").value;
+        const status = statusRaw === "" ? 0 : parseInt(statusRaw, 10);
+        if (Number.isNaN(status)) {
+            alert("status 必须是整数");
+            return;
+        }
+        try {
+            const resp = await fetch("/api/pairs/sync-burn/input", {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    chainId: state.chainId,
+                    address: pairAddress,
+                    status: status,
+                    input: input
+                })
+            });
+            const data = await resp.json();
+            if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+            editingAddr = null;
+            await loadPage(state.page);
+        } catch (err) {
+            alert("保存失败：" + err.message);
+        }
+    }
+
+    async function loadPage(page) {
+        if (page < 0) page = 0;
+        state.chainId = parseInt(document.getElementById("chainId").value, 10);
+        state.sortBy = document.getElementById("sortBy").value;
+        state.page = page;
+
+        const params = new URLSearchParams({
+            chainId: state.chainId,
+            page: state.page,
+            size: state.size,
+            sortBy: state.sortBy
+        });
+
+        const statusEl = document.getElementById("status");
+        const metaEl = document.getElementById("meta");
+        const tableWrap = document.getElementById("tableWrap");
+        const tbody = document.getElementById("tbody");
+        const pager = document.getElementById("pager");
+        const btn = document.getElementById("queryBtn");
+
+        btn.disabled = true;
+        statusEl.className = "status";
+        statusEl.textContent = "查询中...";
+        statusEl.style.display = "block";
+        metaEl.style.display = "none";
+        tableWrap.style.display = "none";
+        pager.style.display = "none";
+        tbody.innerHTML = "";
+
+        try {
+            const resp = await fetch(`/api/pairs/sync-burn/paged?${params.toString()}`);
+            const data = await resp.json();
+            if (!resp.ok) {
+                throw new Error(data.error || `HTTP ${resp.status}`);
+            }
+            state.total = data.totalElements;
+
+            metaEl.innerHTML = `链 <b>${state.chainId}</b> · 排序 <b>${state.sortBy} DESC</b> · 共 <b>${data.totalElements}</b> 条 · 第 <b>${data.number + 1}</b> / <b>${data.totalPages || 1}</b> 页 · 本页 <b>${data.numberOfElements}</b> 条`;
+            metaEl.style.display = "block";
+
+            const content = data.content || [];
+            if (content.length === 0) {
+                statusEl.textContent = "无数据";
+                statusEl.style.display = "block";
+                return;
+            }
+            statusEl.style.display = "none";
+            tableWrap.style.display = "block";
+
+            state.offset = state.page * state.size;
+            state.content = content;
+            editingAddr = null;
+            renderRows();
+
+            // 分页
+            pager.style.display = "flex";
+            document.getElementById("prevBtn").disabled = data.first;
+            document.getElementById("nextBtn").disabled = data.last;
+            document.getElementById("pageInfo").textContent = `${data.number + 1} / ${data.totalPages || 1} 页（共 ${data.totalElements} 条）`;
+        } catch (err) {
+            statusEl.className = "status error";
+            statusEl.textContent = "查询失败：" + err.message;
+            statusEl.style.display = "block";
+        } finally {
+            btn.disabled = false;
+        }
+    }
+</script>
+</body>
+</html>

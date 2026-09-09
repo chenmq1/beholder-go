@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>即时 Approval 事件查询</title>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+            margin: 0; padding: 24px; background: #f5f7fa; color: #1f2d3d;
+        }
+        h1 { font-size: 20px; margin: 0 0 16px; }
+        .card {
+            background: #fff; border-radius: 8px; padding: 20px;
+            box-shadow: 0 1px 4px rgba(0,0,0,.08); margin-bottom: 20px;
+        }
+        .form-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; }
+        .field { display: flex; flex-direction: column; gap: 4px; }
+        .field.grow { flex: 1; min-width: 320px; }
+        label { font-size: 12px; color: #606266; }
+        input, select {
+            border: 1px solid #dcdfe6; border-radius: 4px; padding: 8px 10px;
+            font-size: 14px; outline: none; background: #fff;
+        }
+        input:focus, select:focus { border-color: #409eff; }
+        button {
+            background: #409eff; color: #fff; border: none; border-radius: 4px;
+            padding: 9px 20px; font-size: 14px; cursor: pointer; height: 36px;
+        }
+        button:hover { background: #66b1ff; }
+        button:disabled { background: #a0cfff; cursor: not-allowed; }
+        .hint { font-size: 12px; color: #909399; margin-top: 4px; }
+        .meta { font-size: 13px; color: #606266; margin-bottom: 12px; }
+        .meta b { color: #1f2d3d; }
+        table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid #ebeef5; }
+        th { background: #fafafa; color: #606266; font-weight: 600; position: sticky; top: 0; }
+        td.addr { font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+        td.num { text-align: right; font-family: ui-monospace, Consolas, monospace; }
+        a.tx { color: #409eff; text-decoration: none; }
+        a.tx:hover { text-decoration: underline; }
+        .status { padding: 24px; text-align: center; color: #909399; font-size: 14px; }
+        .error { color: #f56c6c; }
+        .table-wrap { max-height: 60vh; overflow: auto; border: 1px solid #ebeef5; border-radius: 4px; }
+        nav.top { background: #1f2d3d; padding: 0 24px; margin: -24px -24px 20px; height: 48px;
+            display: flex; align-items: center; gap: 8px; }
+        nav.top a { color: #c0c4cc; text-decoration: none; padding: 6px 14px; border-radius: 4px;
+            font-size: 14px; }
+        nav.top a:hover { background: rgba(255,255,255,.1); color: #fff; }
+        nav.top a.active { background: #409eff; color: #fff; }
+    </style>
+</head>
+<body>
+    <nav class="top">
+        <a href="/approval" class="active">即时 Approval</a>
+        <a href="/pair-sync-burn">Pair·Sync·Burn</a>
+        <a href="/send-event">发送任务</a>
+        <a href="/watchlist">函数监控</a>
+    </nav>
+    <h1>即时 Approval 事件查询</h1>
+    <div class="card">
+        <div class="form-row">
+            <div class="field">
+                <label>链</label>
+                <select id="chainId">
+                    <option value="1">1 · Ethereum</option>
+                    <option value="2">2 · BSC</option>
+                    <option value="3">3 · Polygon</option>
+                    <option value="4">4 · Arbitrum</option>
+                    <option value="5">5 · Base</option>
+                    <option value="6">6 · Optimism</option>
+                </select>
+            </div>
+            <div class="field grow">
+                <label>Token 地址（必填）</label>
+                <input id="tokenAddress" type="text" placeholder="0x... 仅查该 token 发出的 Approval 事件">
+            </div>
+            <div class="field">
+                <label>起始区块（可选）</label>
+                <input id="startBlock" type="text" placeholder="留空=回溯 10000">
+            </div>
+            <div class="field">
+                <label>截止区块（可选）</label>
+                <input id="endBlock" type="text" placeholder="留空=最新">
+            </div>
+            <div class="field">
+                <button id="queryBtn" onclick="query()">查询</button>
+            </div>
+        </div>
+        <div class="hint">按 spender 去重（同一 spender 仅保留首次出现），数据实时从链上拉取，不入库。</div>
+    </div>
+
+    <div class="card">
+        <div id="meta" class="meta" style="display:none;"></div>
+        <div id="status" class="status">请填写参数后点击查询</div>
+        <div class="table-wrap" id="tableWrap" style="display:none;">
+            <table>
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>Spender</th>
+                        <th>Owner</th>
+                        <th>合约地址</th>
+                        <th>交易哈希</th>
+                        <th style="text-align:right;">授权数额</th>
+                        <th style="text-align:right;">重复次数</th>
+                    </tr>
+                </thead>
+                <tbody id="tbody"></tbody>
+            </table>
+        </div>
+    </div>
+
+<script>
+    // Phalcon 交易页：https://app.blocksec.com/phalcon/explorer/tx/<chain>/<tx>?line=0
+    const phalconChainByChain = {
+        1: "ethereum",
+        2: "bsc",
+        3: "polygon",
+        4: "arbitrum",
+        5: "base",
+        6: "optimism"
+    };
+    // 地址浏览器（仅地址列使用，txHash 统一用 Phalcon）
+    const explorerByChain = {
+        1: "https://etherscan.io",
+        2: "https://bscscan.com",
+        3: "https://polygonscan.com",
+        4: "https://arbiscan.io",
+        5: "https://basescan.org",
+        6: "https://optimistic.etherscan.io"
+    };
+
+    function shortAddr(addr) {
+        if (!addr) return "";
+        return addr.slice(0, 8) + "..." + addr.slice(-6);
+    }
+
+    function addrCell(addr, chainId, isTx, truncate) {
+        if (!addr) return "";
+        const label = truncate === false ? addr : shortAddr(addr);
+        if (isTx) {
+            // txHash 统一走 Phalcon：.../tx/<chain>/<tx>?line=0
+            const phalconChain = phalconChainByChain[chainId] || "ethereum";
+            const href = `https://app.blocksec.com/phalcon/explorer/tx/${phalconChain}/${addr}?line=0`;
+            return `<td class="addr"><a class="tx" href="${href}" target="_blank" title="${addr}">${label}</a></td>`;
+        }
+        const explorer = explorerByChain[chainId] || "";
+        return `<td class="addr"><a class="tx" href="${explorer}/address/${addr}" target="_blank" title="${addr}">${label}</a></td>`;
+    }
+
+    async function query() {
+        const chainId = document.getElementById("chainId").value;
+        const tokenAddress = document.getElementById("tokenAddress").value.trim();
+        const startBlock = document.getElementById("startBlock").value.trim();
+        const endBlock = document.getElementById("endBlock").value.trim();
+
+        const statusEl = document.getElementById("status");
+        const metaEl = document.getElementById("meta");
+        const tableWrap = document.getElementById("tableWrap");
+        const tbody = document.getElementById("tbody");
+        const btn = document.getElementById("queryBtn");
+
+        if (!tokenAddress) {
+            statusEl.className = "status error";
+            statusEl.textContent = "请填写 Token 地址";
+            statusEl.style.display = "block";
+            metaEl.style.display = "none";
+            tableWrap.style.display = "none";
+            return;
+        }
+
+        const params = new URLSearchParams({ chainId, tokenAddress });
+        if (startBlock) params.set("startBlock", startBlock);
+        if (endBlock) params.set("endBlock", endBlock);
+
+        btn.disabled = true;
+        statusEl.className = "status";
+        statusEl.textContent = "查询中...";
+        statusEl.style.display = "block";
+        metaEl.style.display = "none";
+        tableWrap.style.display = "none";
+        tbody.innerHTML = "";
+
+        try {
+            const resp = await fetch(`/api/instant/approvals?${params.toString()}`);
+            const data = await resp.json();
+            if (!resp.ok) {
+                throw new Error(data.error || `HTTP ${resp.status}`);
+            }
+            const content = (data.content || []).slice().sort((a, b) => b.repeatCount - a.repeatCount);
+            metaEl.innerHTML = `链 <b>${data.chainId}</b> · Token <b>${data.tokenAddress}</b> · 去重后共 <b>${data.count}</b> 条 · 实际扫描区块 <b>${data.scannedStart}</b> – <b>${data.scannedEnd}</b>`;
+            metaEl.style.display = "block";
+
+            if (content.length === 0) {
+                statusEl.textContent = `无匹配事件（已扫描区块 ${data.scannedStart} – ${data.scannedEnd}）`;
+                statusEl.style.display = "block";
+                return;
+            }
+            statusEl.style.display = "none";
+            tableWrap.style.display = "block";
+
+            const rows = content.map((e, i) => `
+                <tr>
+                    <td>${i + 1}</td>
+                    ${addrCell(e.spender, data.chainId, false, false)}
+                    ${addrCell(e.owner, data.chainId, false)}
+                    ${addrCell(e.contractAddress, data.chainId, false)}
+                    ${addrCell(e.txHash, data.chainId, true)}
+                    <td class="num">${e.approvedAmount}</td>
+                    <td class="num">${e.repeatCount}</td>
+                </tr>`).join("");
+            tbody.innerHTML = rows;
+        } catch (err) {
+            statusEl.className = "status error";
+            statusEl.textContent = "查询失败：" + err.message;
+            statusEl.style.display = "block";
+        } finally {
+            btn.disabled = false;
+        }
+    }
+
+    document.getElementById("tokenAddress").addEventListener("keypress", (e) => {
+        if (e.key === "Enter") query();
+    });
+</script>
+</body>
+</html>

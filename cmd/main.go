@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 
 	"github.com/beholder-daemon/config"
 	"github.com/beholder-daemon/internal/controller"
 	"github.com/beholder-daemon/internal/service"
+	"github.com/beholder-daemon/internal/utils"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/spf13/viper"
@@ -26,11 +28,17 @@ func main() {
 
 	// 初始化Web3j客户端
 	log.Println("Initializing Web3j clients...")
-	_, err = config.InitWeb3j()
+	ethClients, err := config.InitWeb3j()
 	if err != nil {
-		log.Fatalf("Failed to initialize Web3j clients: %v", err)
+		log.Fatalf("Failed to initialize Web3j: %v", err)
 	}
 	log.Println("Web3j clients initialized successfully")
+
+	// 构建 Web3Client 映射，供即时事件查询服务使用
+	web3Clients := make(map[string]*utils.Web3Client)
+	for name, client := range ethClients {
+		web3Clients[name] = utils.NewWeb3Client(context.Background(), client, name)
+	}
 
 	// 初始化RabbitMQ连接
 	rabbitMQConn, err := config.InitRabbitMQ()
@@ -72,9 +80,18 @@ func main() {
 	}
 	defer publisher.Close()
 
-	// 注册控制器路由
-	beholderController := controller.NewBeholderController(db, publisher)
+	// 注册控制器路由（含即时事件查询 /api/instant/*，面向前端实时调用，不入库）
+	beholderController := controller.NewBeholderController(db, publisher, web3Clients)
 	beholderController.RegisterRoutes(r)
+
+	// 前端页面：即时 Approval 查询
+	r.StaticFile("/approval", "./web/approval.html")
+	// 前端页面：pair ↔ sync ↔ burn 视图
+	r.StaticFile("/pair-sync-burn", "./web/pair_sync_burn.html")
+	// 前端页面：发送事件收集任务到 MQ
+	r.StaticFile("/send-event", "./web/send_event.html")
+	// 前端页面：函数调用监控（watchlist）
+	r.StaticFile("/watchlist", "./web/watchlist.html")
 
 	// 获取服务端口
 	port := viper.GetInt("app.port")

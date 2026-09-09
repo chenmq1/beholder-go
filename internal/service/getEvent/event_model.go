@@ -96,6 +96,13 @@ type mergeReplacer interface {
 	ShouldReplaceInMerge(existing *types.Log, incoming *types.Log) bool
 }
 
+// logIgnorer 事件过滤接口（可选）：收集阶段对每条原始事件调用，返回 true 表示
+// 忽略该事件（不参与去重与计数）。用于模型丢弃不关心的事件
+// （如 external_burn 丢弃 from == 发出合约地址的自销毁）。
+type logIgnorer interface {
+	ShouldIgnoreLog(l *types.Log) bool
+}
+
 type sourceKind int
 
 const (
@@ -126,6 +133,7 @@ type eventPlan struct {
 	blockNumberCol string                                   // block_number 列名（json:"blockNumber" 字段），空表示无
 	segReplaceFn   func(existing, incoming *types.Log) bool // ShouldReplaceInSeg 策略，nil = 首见保留
 	mergeReplaceFn func(existing, incoming *types.Log) bool // ShouldReplaceInMerge 策略，nil = 首见保留
+	ignoreFn       func(l *types.Log) bool                  // ShouldIgnoreLog 过滤，nil = 不过滤
 	dedupForward   bool                                     // 去重遍历方向：false（默认）= 反向（Backward 语义）
 	dataTypes      []abi.Type                               // DataFormat 解析结果，nil 表示未声明
 	dataArgs       abi.Arguments                            // dataTypes 非空时预构造，用于 Unpack
@@ -229,6 +237,9 @@ func buildEventPlan(model interface{}) (*eventPlan, error) {
 	}
 	if dd, ok := model.(dedupDirectioner); ok {
 		plan.dedupForward = dd.DedupDirection() == DedupForward
+	}
+	if li, ok := model.(logIgnorer); ok {
+		plan.ignoreFn = li.ShouldIgnoreLog
 	}
 
 	if len(plan.pkFields) == 0 {
@@ -637,6 +648,40 @@ func PostProcess(db *gorm.DB, events map[string]types.Log, counts map[string]int
 	return inserted, errors.Join(errs...)
 }
 
+// BuildEvents 将收集到的原始事件按 eventModel 的 json tag 映射转换为结构体实例
+// （与 PostProcess 的转换逻辑一致，但不入库）。返回模型实例切片，每个元素为
+// eventModel 的指针类型。counts 非空且模型含 repeat_count 列时写入出现次数。
+// 单条转换失败不影响其余事件，错误经聚合后返回。
+//
+// 适用于不入库、直接返回给调用方的场景（如前端即时查询）。
+func BuildEvents(events map[string]types.Log, counts map[string]int, chainId int, eventModel interface{}) ([]interface{}, error) {
+	if len(events) == 0 {
+		return nil, nil
+	}
+	plan, err := buildEventPlan(eventModel)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]interface{}, 0, len(events))
+	var errs []error
+	for key, l := range events {
+		rc := 1
+		if counts != nil {
+			if c, ok := counts[key]; ok && c > 0 {
+				rc = c
+			}
+		}
+		entity, err := plan.BuildEvent(&l, chainId, rc)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("tx %s: %w", l.TxHash.Hex(), err))
+			continue
+		}
+		out = append(out, entity)
+	}
+	return out, errors.Join(errs...)
+}
+
 // ConcurrentCollector 并发收集器接口：为每个区块段提供独立的本地收集器（无锁），
 // 全部区块段完成后按序合并。模型模式（eventCollector / MultiCollector）实现此接口，
 // 自定义 process 模式由 processCollector 适配（共享 process，无收集状态）。
@@ -740,6 +785,9 @@ func (s *segmentCollector) Process() ProcessFunc {
 				i = n - 1 - j // 默认反向遍历：Backward 拉取语义下首见即最新
 			}
 			l := &logs[i]
+			if s.plan.ignoreFn != nil && s.plan.ignoreFn(l) {
+				continue
+			}
 			key, ok := s.plan.DedupKey(l)
 			if !ok {
 				continue
@@ -859,6 +907,9 @@ func (s *multiSegment) Process() ProcessFunc {
 			}
 			idx, ok := s.mc.route[l.Topics[0]] // 只读 map，无锁安全
 			if !ok {
+				continue
+			}
+			if fn := s.mc.plans[idx].ignoreFn; fn != nil && fn(l) {
 				continue
 			}
 			key, ok := s.mc.plans[idx].DedupKey(l)
