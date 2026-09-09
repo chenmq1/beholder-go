@@ -58,6 +58,10 @@ type EventCollectConfig struct {
 	// CallbackKey + ":" + 事件名列表（写全时直接用 CallbackKey）。
 	// 此时 EventModel/Topics 不参与。
 	EventRegistry map[string]EventDef
+	// AuxFilter 可选：每个区块段在主事件之外额外拉取的辅助日志 filter，
+	// 配合模型的 ShouldCorrelateInSeg 做段内跨事件关联（如 burn 同时拉 sync）。
+	// 只需提供 Addresses/Topics，FromBlock/ToBlock 由框架按当前段填充。
+	AuxFilter ethereum.FilterQuery
 }
 
 // EventDef 可组合的事件定义
@@ -306,6 +310,7 @@ func (s *EventCollectService) ProcessTask(message map[string]interface{}) {
 			getevent.ConcurrentConfig{
 				SegmentSize: cfg.SegmentSize,
 				MaxWorkers:  cfg.MaxWorkers,
+				AuxFilter:   cfg.AuxFilter,
 			},
 		)
 		if err != nil {

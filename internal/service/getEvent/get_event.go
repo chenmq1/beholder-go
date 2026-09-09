@@ -158,6 +158,16 @@ type ConcurrentConfig struct {
 	SegmentSize int // 每个区块段的块数，<=0 时使用 DefaultStepLength
 	MaxWorkers  int // 最大并发 goroutine 数，<=0 表示不限制
 	StepLength  int // 区块段内的步长，<=0 时使用 DefaultStepLength
+	// AuxFilter 可选：每个区块段在主事件之外额外拉取的辅助日志 filter，
+	// 用于段内跨事件关联（如 burn 同时拉 sync）。只需提供 Addresses/Topics，
+	// FromBlock/ToBlock 由框架按当前段填充；为零值时不启用。
+	AuxFilter ethereum.FilterQuery
+}
+
+// AuxLogReceiver 可选接口：实现它的 SegmentCollector 可接收当前区块段的辅助日志，
+// 在 Process 主事件时基于辅助事件做段内关联判定（由模型的 ShouldCorrelateInSeg 完成）。
+type AuxLogReceiver interface {
+	SetAuxLogs(logs []types.Log)
 }
 
 // ForwardConcurrent 并发正向获取链上事件：
@@ -187,6 +197,9 @@ func ForwardConcurrent(ctx context.Context, client *ethclient.Client, startBlock
 	}
 	segs, err := runSegmentsConcurrently(startBlock, endBlock, cfg, collector.NewSegment,
 		func(sc SegmentCollector, from, to int64) error {
+			if err := feedAuxLogs(ctx, client, cfg.AuxFilter, sc, from, to); err != nil {
+				return err
+			}
 			return Forward(ctx, client, from, to, ethFilter, sc.Process(), stepLength)
 		})
 	for _, sc := range segs {
@@ -211,12 +224,36 @@ func BackwardConcurrent(ctx context.Context, client *ethclient.Client, startBloc
 	}
 	segs, err := runSegmentsConcurrently(startBlock, endBlock, cfg, collector.NewSegment,
 		func(sc SegmentCollector, from, to int64) error {
+			if err := feedAuxLogs(ctx, client, cfg.AuxFilter, sc, from, to); err != nil {
+				return err
+			}
 			return Backward(ctx, client, from, to, ethFilter, sc.Process(), stepLength)
 		})
 	for _, sc := range segs {
 		collector.Merge(sc)
 	}
 	return collector.Events(), collector.Counts(), err
+}
+
+// feedAuxLogs 若 cfg.AuxFilter 非空，拉取当前区块段的辅助日志并注入段收集器。
+// 只在段收集器实现了 AuxLogReceiver 接口时注入；拉取失败返回错误，由调用方决定处理。
+func feedAuxLogs(ctx context.Context, client *ethclient.Client, aux ethereum.FilterQuery, sc SegmentCollector, from, to int64) error {
+	if len(aux.Addresses) == 0 && len(aux.Topics) == 0 {
+		return nil
+	}
+	receiver, ok := sc.(AuxLogReceiver)
+	if !ok {
+		return nil
+	}
+	f := aux
+	f.FromBlock = big.NewInt(from)
+	f.ToBlock = big.NewInt(to)
+	logs, err := client.FilterLogs(ctx, f)
+	if err != nil {
+		return fmt.Errorf("拉取辅助日志失败: %w", err)
+	}
+	receiver.SetAuxLogs(logs)
+	return nil
 }
 
 // runSegmentsConcurrently 将区块范围切分为不重叠的区块段并发执行。

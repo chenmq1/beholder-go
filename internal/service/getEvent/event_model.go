@@ -103,6 +103,16 @@ type logIgnorer interface {
 	ShouldIgnoreLog(l *types.Log) bool
 }
 
+// segCorrelater 段内跨事件关联过滤接口（可选）：每条事件在段内去重、写入本地 map
+// 之前调用。mainIdx 是当前日志在 main（本批次主 filter 日志，正序）中的数组下标，
+// main 是主事件日志（含被 ShouldIgnoreLog 忽略的种类），aux 是当前区块段额外
+// 拉取的辅助日志（ConcurrentConfig.AuxFilter）。main/aux 均按 (区块号, logIndex)
+// 升序；模型可直接用 main[mainIdx+1] 之类的下标 O(1) 定位相邻主事件。
+// 返回 true 表示保留，false 表示忽略（不参与去重与计数）。未实现默认保留。
+type segCorrelater interface {
+	ShouldCorrelateInSeg(l *types.Log, mainIdx int, main, aux []types.Log) bool
+}
+
 type sourceKind int
 
 const (
@@ -134,6 +144,7 @@ type eventPlan struct {
 	segReplaceFn   func(existing, incoming *types.Log) bool // ShouldReplaceInSeg 策略，nil = 首见保留
 	mergeReplaceFn func(existing, incoming *types.Log) bool // ShouldReplaceInMerge 策略，nil = 首见保留
 	ignoreFn       func(l *types.Log) bool                  // ShouldIgnoreLog 过滤，nil = 不过滤
+	correlateFn    func(l *types.Log, mainIdx int, main, aux []types.Log) bool // ShouldCorrelateInSeg 段内关联过滤，nil = 保留
 	dedupForward   bool                                     // 去重遍历方向：false（默认）= 反向（Backward 语义）
 	dataTypes      []abi.Type                               // DataFormat 解析结果，nil 表示未声明
 	dataArgs       abi.Arguments                            // dataTypes 非空时预构造，用于 Unpack
@@ -240,6 +251,9 @@ func buildEventPlan(model interface{}) (*eventPlan, error) {
 	}
 	if li, ok := model.(logIgnorer); ok {
 		plan.ignoreFn = li.ShouldIgnoreLog
+	}
+	if sc, ok := model.(segCorrelater); ok {
+		plan.correlateFn = sc.ShouldCorrelateInSeg
 	}
 
 	if len(plan.pkFields) == 0 {
@@ -771,10 +785,14 @@ func (c *eventCollector) Counts() map[string]int       { return c.counts }
 
 // segmentCollector 区块段本地收集器（无锁）：按模型主键去重，value 存原始事件
 type segmentCollector struct {
-	plan   *eventPlan
-	events map[string]types.Log
-	counts map[string]int
+	plan    *eventPlan
+	events  map[string]types.Log
+	counts  map[string]int
+	auxLogs []types.Log // 当前段额外拉取的辅助日志（ConcurrentConfig.AuxFilter），用于段内关联
 }
+
+// SetAuxLogs 注入当前区块段的辅助日志（由框架在 Process 之前调用）
+func (s *segmentCollector) SetAuxLogs(logs []types.Log) { s.auxLogs = logs }
 
 func (s *segmentCollector) Process() ProcessFunc {
 	return func(logs []types.Log, _ ethereum.FilterQuery) Result {
@@ -786,6 +804,10 @@ func (s *segmentCollector) Process() ProcessFunc {
 			}
 			l := &logs[i]
 			if s.plan.ignoreFn != nil && s.plan.ignoreFn(l) {
+				continue
+			}
+			// 段内跨事件关联过滤：i 为 l 在正序 main 切片中的下标
+			if s.plan.correlateFn != nil && !s.plan.correlateFn(l, i, logs, s.auxLogs) {
 				continue
 			}
 			key, ok := s.plan.DedupKey(l)
