@@ -31,8 +31,8 @@
         .hint { font-size: 12px; color: #909399; margin-top: 4px; }
         .meta { font-size: 13px; color: #606266; margin-bottom: 12px; }
         .meta b { color: #1f2d3d; }
-        table { width: 100%; border-collapse: collapse; font-size: 13px; }
-        th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid #ebeef5; vertical-align: top; }
+        table { width: 100%; border-collapse: collapse; font-size: 13px; table-layout: auto; }
+        th, td { padding: 6px 8px; text-align: left; border-bottom: 1px solid #ebeef5; vertical-align: middle; white-space: nowrap; }
         th { background: #fafafa; color: #606266; font-weight: 600; position: sticky; top: 0; z-index: 1; }
         td.addr { font-family: ui-monospace, Consolas, monospace; font-size: 12px; white-space: nowrap; }
         td.num { text-align: right; font-family: ui-monospace, Consolas, monospace; }
@@ -55,8 +55,9 @@
             padding: 4px 6px; border: 1px solid #dcdfe6; border-radius: 4px; outline: none; }
         td input.cell-edit:focus { border-color: #409eff; }
         td input.cell-edit.num-edit { width: 70px; text-align: right; }
-        td .input-preview { display: inline-block; max-width: 260px; overflow: hidden;
+        td .input-preview { display: inline-block; max-width: 180px; overflow: hidden;
             text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+        td.input-cell { white-space: normal; max-width: 180px; }
         a.tx .alias-badge { display: inline-block; padding: 1px 7px; border-radius: 3px;
             background: #fdf6ec; color: #e6a23c; font-weight: 700; font-size: 12px;
             border: 1px solid #faecd8; font-family: -apple-system, "Segoe UI", sans-serif; }
@@ -74,6 +75,9 @@
     <nav class="top">
         <a href="/approval">即时 Approval</a>
         <a href="/pair-sync-burn" class="active">Pair·Sync·Burn</a>
+        <a href="/burn-events">Burn Events</a>
+        <a href="/solidary-sync-events">Solidary Sync</a>
+        <a href="/solidary-burn-cross">Sync × Burn Old</a>
         <a href="/send-event">发送任务</a>
         <a href="/watchlist">函数监控</a>
     </nav>
@@ -238,10 +242,10 @@
                     ${hashCell(e.burnHash, state.chainId)}
                     ${editing ? `
                         <td class="num"><input class="cell-edit num-edit" type="number" id="edit-status" value="${status}"></td>
-                        <td><input class="cell-edit" type="text" id="edit-input" value="${escapeHtml(input)}"></td>
+                        <td class="input-cell"><input class="cell-edit" type="text" id="edit-input" value="${escapeHtml(input)}"></td>
                     ` : `
                         <td class="num">${status}</td>
-                        <td class="addr" title="${escapeHtml(input)}">${input ? `<span class="input-preview">${escapeHtml(input)}</span>` : ""}</td>
+                        <td class="input-cell" title="${escapeHtml(input)}">${input ? `<span class="input-preview">${escapeHtml(input)}</span>` : ""}</td>
                     `}
                     ${editing ? `
                             <button class="mini save" onclick="saveEdit('${pair}')">保存</button>

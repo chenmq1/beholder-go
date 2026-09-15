@@ -88,6 +88,12 @@ func main() {
 	r.StaticFile("/approval", "./web/approval.html")
 	// 前端页面：pair ↔ sync ↔ burn 视图
 	r.StaticFile("/pair-sync-burn", "./web/pair_sync_burn.html")
+	// 前端页面：burn_event 直接查询
+	r.StaticFile("/burn-events", "./web/burn_events.html")
+	// 前端页面：solidary_sync_event 直接查询
+	r.StaticFile("/solidary-sync-events", "./web/solidary_sync_events.html")
+	// 前端页面：solidary_sync × burn_event_old 交集
+	r.StaticFile("/solidary-burn-cross", "./web/solidary_burn_cross.html")
 	// 前端页面：发送事件收集任务到 MQ
 	r.StaticFile("/send-event", "./web/send_event.html")
 	// 前端页面：函数调用监控（watchlist）

@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Solidary Sync Events</title>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+            margin: 0; padding: 24px; background: #f5f7fa; color: #1f2d3d;
+        }
+        nav.top {
+            display: flex; gap: 8px; margin-bottom: 16px;
+        }
+        nav.top a {
+            display: inline-block; padding: 6px 14px; border-radius: 4px;
+            text-decoration: none; font-size: 13px; color: #409eff;
+            background: #ecf5ff; border: 1px solid #d9ecff;
+        }
+        nav.top a.active { background: #409eff; color: #fff; border-color: #409eff; }
+        h1 { font-size: 20px; margin: 0 0 16px; }
+        .card {
+            background: #fff; border-radius: 8px; padding: 20px;
+            box-shadow: 0 1px 4px rgba(0,0,0,.08); margin-bottom: 20px;
+        }
+        .form-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; }
+        .field { display: flex; flex-direction: column; gap: 4px; }
+        label { font-size: 12px; color: #606266; }
+        select, button {
+            border: 1px solid #dcdfe6; border-radius: 4px; padding: 8px 10px;
+            font-size: 14px; outline: none; background: #fff;
+        }
+        select:focus { border-color: #409eff; }
+        button {
+            background: #409eff; color: #fff; border: none; cursor: pointer; height: 36px;
+        }
+        button:hover { background: #66b1ff; }
+        button:disabled { background: #a0cfff; cursor: not-allowed; }
+        .hint { font-size: 12px; color: #909399; margin-top: 4px; }
+        .meta { font-size: 13px; color: #606266; margin-bottom: 12px; }
+        .meta b { color: #1f2d3d; }
+        table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        th, td { padding: 6px 8px; text-align: left; border-bottom: 1px solid #ebeef5; vertical-align: middle; white-space: nowrap; }
+        th { background: #fafafa; color: #606266; font-weight: 600; position: sticky; top: 0; z-index: 1; }
+        td.addr { font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+        td.num { text-align: right; font-family: ui-monospace, Consolas, monospace; }
+        a.tx { color: #409eff; text-decoration: none; }
+        a.tx:hover { text-decoration: underline; }
+        .status { padding: 24px; text-align: center; color: #909399; font-size: 14px; }
+        .table-wrap { overflow: auto; border: 1px solid #ebeef5; border-radius: 4px; }
+        .pager { display: flex; align-items: center; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+        .pager .info { font-size: 13px; color: #606266; }
+        .pager button { height: 32px; padding: 6px 14px; }
+        .pager button:disabled { background: #c0c4cc; cursor: not-allowed; }
+    </style>
+</head>
+<body>
+    <nav class="top">
+        <a href="/approval">即时 Approval</a>
+        <a href="/pair-sync-burn">Pair·Sync·Burn</a>
+        <a href="/burn-events">Burn Events</a>
+        <a href="/solidary-sync-events" class="active">Solidary Sync</a>
+        <a href="/solidary-burn-cross">Sync × Burn Old</a>
+        <a href="/send-event">发送任务</a>
+        <a href="/watchlist">函数监控</a>
+    </nav>
+    <h1>Solidary Sync Events（孤立 Sync，后面无 Swap）</h1>
+    <div class="card">
+        <div class="form-row">
+            <div class="field">
+                <label>链</label>
+                <select id="chainId">
+                    <option value="1">1 · Ethereum</option>
+                    <option value="2" selected>2 · BSC</option>
+                    <option value="3">3 · Polygon</option>
+                    <option value="4">4 · Arbitrum</option>
+                    <option value="5">5 · Base</option>
+                    <option value="6">6 · Optimism</option>
+                </select>
+            </div>
+            <div class="field">
+                <label>排序</label>
+                <select id="sortBy">
+                    <option value="repeatCount" selected>repeatCount 倒序</option>
+                    <option value="address">address 升序</option>
+                    <option value="txHash">txHash 倒序</option>
+                </select>
+            </div>
+            <div class="field">
+                <button id="queryBtn" onclick="loadPage(0)">查询</button>
+            </div>
+        </div>
+        <div class="hint">默认 BSC；100 条/页；地址不缩写；txHash 链接到 Phalcon。</div>
+    </div>
+
+    <div class="card">
+        <div id="meta" class="meta" style="display:none;"></div>
+        <div id="status" class="status">选择参数后点击查询</div>
+        <div class="table-wrap" id="tableWrap" style="display:none;">
+            <table>
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>chainId</th>
+                        <th>address (pair)</th>
+                        <th>txHash</th>
+                        <th style="text-align:right;">repeatCount</th>
+                    </tr>
+                </thead>
+                <tbody id="tbody"></tbody>
+            </table>
+        </div>
+        <div class="pager" id="pager" style="display:none;">
+            <button id="prevBtn" onclick="loadPage(state.page - 1)">上一页</button>
+            <button id="nextBtn" onclick="loadPage(state.page + 1)">下一页</button>
+            <span class="info" id="pageInfo"></span>
+        </div>
+    </div>
+
+<script>
+    const phalconChainByChain = {
+        1: "ethereum", 2: "bsc", 3: "polygon",
+        4: "arbitrum", 5: "base", 6: "optimism"
+    };
+    const explorerByChain = {
+        1: "https://etherscan.io", 2: "https://bscscan.com",
+        3: "https://polygonscan.com", 4: "https://arbiscan.io",
+        5: "https://basescan.org", 6: "https://optimistic.etherscan.io"
+    };
+
+    const state = { content: [], total: 0, page: 0, size: 100, chainId: 2, sortBy: "repeatCount", loading: false };
+
+    function escapeHtml(s) {
+        return String(s).replace(/[&<>"']/g, m => ({
+            "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+        }[m]));
+    }
+
+    function hashCell(txHash, chainId) {
+        if (!txHash) return '<td class="addr"></td>';
+        const ch = phalconChainByChain[chainId];
+        return `<td class="addr"><a class="tx" href="https://app.blocksec.com/phalcon/explorer/tx/${ch}/${txHash}?line=0" target="_blank">${txHash}</a></td>`;
+    }
+
+    function addrCell(addr, chainId) {
+        if (!addr) return '<td class="addr"></td>';
+        const explorer = explorerByChain[chainId] || "";
+        return `<td class="addr"><a class="tx" href="${explorer}/address/${addr}" target="_blank">${addr}</a></td>`;
+    }
+
+    async function loadPage(page) {
+        const chainId = parseInt(document.getElementById("chainId").value);
+        const sortBy = document.getElementById("sortBy").value;
+        if (page < 0) page = 0;
+
+        state.loading = true;
+        document.getElementById("status").style.display = "block";
+        document.getElementById("status").textContent = "加载中...";
+        document.getElementById("status").className = "status";
+        document.getElementById("tableWrap").style.display = "none";
+        document.getElementById("pager").style.display = "none";
+        document.getElementById("meta").style.display = "none";
+
+        try {
+            const url = `/api/solidary-syncs/paged?chainId=${chainId}&page=${page}&size=100&sortBy=${sortBy}`;
+            const res = await fetch(url);
+            if (!res.ok) {
+                const errText = await res.text();
+                throw new Error(`HTTP ${res.status}: ${errText}`);
+            }
+            const data = await res.json();
+            state.content = data.content || [];
+            state.total = data.total || 0;
+            state.page = data.page;
+            state.chainId = data.chainId;
+            state.sortBy = sortBy;
+
+            document.getElementById("status").style.display = "none";
+            if (state.content.length === 0) {
+                document.getElementById("status").textContent = "无数据";
+                document.getElementById("status").style.display = "block";
+            } else {
+                renderTable();
+            }
+            renderPager();
+        } catch (e) {
+            document.getElementById("status").textContent = "错误: " + e.message;
+            document.getElementById("status").className = "status error";
+        } finally {
+            state.loading = false;
+        }
+    }
+
+    function renderTable() {
+        const offset = state.page * state.size;
+        document.getElementById("meta").textContent = `共 ${state.total} 条`;
+        document.getElementById("meta").style.display = "block";
+        document.getElementById("tableWrap").style.display = "block";
+
+        const tbody = document.getElementById("tbody");
+        tbody.innerHTML = state.content.map((e, i) => `
+            <tr>
+                <td>${offset + i + 1}</td>
+                <td class="num">${e.chainId}</td>
+                ${addrCell(e.address, state.chainId)}
+                ${hashCell(e.txHash, state.chainId)}
+                <td class="num">${e.repeatCount}</td>
+            </tr>
+        `).join("");
+    }
+
+    function renderPager() {
+        const totalPages = Math.ceil(state.total / state.size);
+        document.getElementById("pager").style.display = totalPages > 0 ? "flex" : "none";
+        document.getElementById("prevBtn").disabled = state.page <= 0;
+        document.getElementById("nextBtn").disabled = state.page >= totalPages - 1;
+        document.getElementById("pageInfo").textContent =
+            `第 ${state.page + 1} / ${totalPages} 页（${state.total} 条）`;
+    }
+</script>
+</body>
+</html>

@@ -13,9 +13,9 @@ import (
 // 筛选条件：topic2（to）∈ {0x0, 0xdead}，主 filter topic0 = Transfer OR SwapV2
 // （在 service/common/external_burn 的 Topics 里声明；Swap 仅用于关联判定，不入库）。
 // 段内关联过滤（ShouldCorrelateInSeg，aux 为同段 Sync 日志）：
-// 仅保留合约自销毁（from == 发出合约）的 Transfer，且同块内 logIndex 恰好 I+1
+// 仅保留非自销毁（from != 发出合约）的 Transfer，且同块内 logIndex 恰好 I+1
 // 是 from 发出的 Sync、I+2 不是 from 发出的 SwapV2（to ∈ {0x0,0xdead}）——
-// 匹配 pair 销毁 LP 后立即 Sync 的事件形态。
+// 匹配 pair 销毁持仓后立即 Sync 的事件形态。
 // 保存字段：from（topic1，销毁发起方）、txHash、repeatCount。
 // 不保存 contract_address、不保存 to（to 仅作筛选，固定两个值无业务意义）。
 //
@@ -26,7 +26,7 @@ type BurnEvent struct {
 	ChainID     int16  `gorm:"primary_key;column:chain_id" json:"chainId"`
 	From        string `gorm:"primary_key;column:from_addr;type:varchar(66)" json:"topic1"`
 	TxHash      string `gorm:"column:tx_hash;type:varchar(66)" json:"txHash"`
-	RepeatCount int    `gorm:"column:repeat_count;type:int" json:"-"`
+	RepeatCount int    `gorm:"column:repeat_count;type:int" json:"repeatCount"`
 }
 
 // TableName 设置表名
@@ -56,7 +56,8 @@ func (BurnEvent) ShouldIgnoreLog(l *types.Log) bool {
 // aux 为 Sync 日志。三者均按 (区块号, logIndex) 升序。
 //
 // 判定（顺序执行）：
-//  1. 前置：Transfer 必须是合约自销毁——from（topic1）== 事件发出地址 l.Address；
+//  1. 前置：Transfer 必须不是合约自销毁——from（topic1）!= 事件发出地址 l.Address
+//     （排除 pair 销毁自家 LP 的自销毁形态，保留外部销毁）；
 //  2. 先筛 Swap：main[mainIdx+1] 即 main 中紧接的下一条（Sync 不在 main 内）。
 //     形态 Transfer@I → Sync@I+1(aux) → Swap@I+2(main)，故它的 logIndex 应恰好
 //     为 I+2；若它同块、Index==I+2、由 from 发出且是 SwapV2，则排除（return false）；
@@ -68,8 +69,8 @@ func (BurnEvent) ShouldCorrelateInSeg(l *types.Log, mainIdx int, main, aux []typ
 		return false
 	}
 	from := ethcommon.BytesToAddress(l.Topics[1].Bytes())
-	// 1. 前置：仅处理合约自销毁（from == 发出合约）
-	if from != l.Address {
+	// 1. 前置：排除合约自销毁（from == 发出合约），保留外部销毁
+	if from == l.Address {
 		return false
 	}
 	swapHash := ethcommon.HexToHash(swapV2Sig)

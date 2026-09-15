@@ -13,9 +13,11 @@ import (
 	"github.com/beholder-daemon/internal/service/common/approve"
 	"github.com/beholder-daemon/internal/service/common/commonevent"
 	"github.com/beholder-daemon/internal/service/common/external_burn"
+	"github.com/beholder-daemon/internal/service/common/external_burn_old"
 	"github.com/beholder-daemon/internal/service/common/mint"
 	"github.com/beholder-daemon/internal/service/common/paircreated"
 	"github.com/beholder-daemon/internal/service/common/swapv2"
+	"github.com/beholder-daemon/internal/service/common/solidarysync"
 	"github.com/beholder-daemon/internal/service/common/swapv3"
 	"github.com/beholder-daemon/internal/service/common/syncevent"
 	"github.com/beholder-daemon/internal/service/getcode"
@@ -40,9 +42,11 @@ type TaskProcessingService struct {
 	mintEventGetService        *svccommon.EventCollectService
 	pairCreatedEventGetService *svccommon.EventCollectService
 	burnEventGetService        *svccommon.EventCollectService
+	burnOldEventGetService     *svccommon.EventCollectService
 	swapV2EventGetService      *svccommon.EventCollectService
 	swapV3EventGetService      *svccommon.EventCollectService
 	syncEventGetService        *svccommon.EventCollectService
+	solidarySyncGetService     *svccommon.EventCollectService
 	commonEventGetService      *svccommon.EventCollectService
 }
 
@@ -117,6 +121,9 @@ func NewTaskProcessingService() (*TaskProcessingService, error) {
 	// 创建外部Burn事件收集服务实例
 	burnEventGetService := external_burn.NewEventGetService(db, web3Clients)
 
+	// 创建旧版Burn事件收集服务实例（aux-sync 关联前逻辑，入库 burn_event_old，与新逻辑并行）
+	burnOldEventGetService := external_burn_old.NewEventGetService(db, web3Clients)
+
 	// 创建SwapV2事件收集服务实例
 	swapV2EventGetService := swapv2.NewEventGetService(db, web3Clients)
 
@@ -125,6 +132,9 @@ func NewTaskProcessingService() (*TaskProcessingService, error) {
 
 	// 创建Sync事件收集服务实例
 	syncEventGetService := syncevent.NewEventGetService(db, web3Clients)
+
+	// 创建孤立Sync事件收集服务实例
+	solidarySyncGetService := solidarysync.NewEventGetService(db, web3Clients)
 
 	// 创建组合事件收集服务实例（events 参数可选 approve/pairCreated/swapV2/swapV3/sync 任意组合）
 	commonEventGetService := commonevent.NewEventGetService(db, web3Clients)
@@ -145,9 +155,11 @@ func NewTaskProcessingService() (*TaskProcessingService, error) {
 		mintEventGetService:        mintEventGetService,
 		pairCreatedEventGetService: pairCreatedEventGetService,
 		burnEventGetService:        burnEventGetService,
+		burnOldEventGetService:     burnOldEventGetService,
 		swapV2EventGetService:      swapV2EventGetService,
 		swapV3EventGetService:      swapV3EventGetService,
 		syncEventGetService:        syncEventGetService,
+		solidarySyncGetService:     solidarySyncGetService,
 		commonEventGetService:      commonEventGetService,
 	}, nil
 }
@@ -233,6 +245,15 @@ func (s *TaskProcessingService) ProcessTask(message map[string]interface{}) {
 					fmt.Printf("未知任务类型: %s\n", task)
 				}
 			}
+		} else if function == "burnOld" {
+			if task, ok := message["task"].(string); ok {
+				switch task {
+				case "collect":
+					s.burnOldEventGetService.ProcessTask(message)
+				default:
+					fmt.Printf("未知任务类型: %s\n", task)
+				}
+			}
 		} else if function == "swapV2" {
 			if task, ok := message["task"].(string); ok {
 				switch task {
@@ -265,6 +286,15 @@ func (s *TaskProcessingService) ProcessTask(message map[string]interface{}) {
 				switch task {
 				case "collect":
 					s.commonEventGetService.ProcessTask(message)
+				default:
+					fmt.Printf("未知任务类型: %s\n", task)
+				}
+			}
+		} else if function == "solidarySync" {
+			if task, ok := message["task"].(string); ok {
+				switch task {
+				case "collect":
+					s.solidarySyncGetService.ProcessTask(message)
 				default:
 					fmt.Printf("未知任务类型: %s\n", task)
 				}

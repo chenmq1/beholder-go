@@ -7,6 +7,7 @@ import (
 
 	instantcommon "github.com/beholder-daemon/internal/service/instant-common"
 	"github.com/beholder-daemon/internal/model"
+	modelcommon "github.com/beholder-daemon/internal/model/common"
 	"github.com/beholder-daemon/internal/model/burnpair"
 	"github.com/beholder-daemon/internal/model/uniswapcallback"
 	modelwl "github.com/beholder-daemon/internal/model/watchlist"
@@ -76,6 +77,15 @@ func (c *BeholderController) RegisterRoutes(router *gin.Engine) {
 			wl.GET("/function-calls", c.listFunctionCalls)
 			wl.POST("/function-calls/refresh", c.refreshFunctionCalls)
 		}
+
+		// burn_event 直接查询（分页）
+		api.GET("/burns/paged", c.getBurnsPaged)
+
+		// solidary_sync_event 直接查询（分页）
+		api.GET("/solidary-syncs/paged", c.getSolidarySyncsPaged)
+
+		// solidary_sync_event × burn_event_old 交集查询（分页）
+		api.GET("/solidary-burn-cross/paged", c.getSolidaryBurnCrossPaged)
 	}
 }
 
@@ -631,4 +641,178 @@ func (c *BeholderController) sendSendersTask(ctx *gin.Context) {
 	}
 
 	ctx.JSON(http.StatusOK, gin.H{"message": fmt.Sprintf("任务 %d 发送成功", taskId)})
+}
+
+// getBurnsPaged 分页查询 burn_event 表
+// GET /api/burns/paged?chainId=2&page=0&size=100&sortBy=repeatCount
+func (c *BeholderController) getBurnsPaged(ctx *gin.Context) {
+	chainId, _ := strconv.Atoi(ctx.DefaultQuery("chainId", "2"))
+	page, _ := strconv.Atoi(ctx.DefaultQuery("page", "0"))
+	size, _ := strconv.Atoi(ctx.DefaultQuery("size", "100"))
+	sortBy := ctx.DefaultQuery("sortBy", "repeatCount")
+
+	if size <= 0 || size > 1000 {
+		size = 100
+	}
+	if page < 0 {
+		page = 0
+	}
+
+	validSort := map[string]string{
+		"repeatCount": "repeat_count DESC",
+		"fromAddr":    "from_addr ASC",
+		"txHash":      "tx_hash DESC",
+	}
+	orderClause, ok := validSort[sortBy]
+	if !ok {
+		orderClause = "repeat_count DESC"
+	}
+
+	var total int
+	c.db.Table("burn_event").Where("chain_id = ?", chainId).Count(&total)
+
+	var rows []modelcommon.BurnEvent
+	c.db.Where("chain_id = ?", chainId).
+		Order(orderClause).
+		Offset(page * size).Limit(size).
+		Find(&rows)
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"content": rows,
+		"total":   total,
+		"page":    page,
+		"size":    size,
+		"chainId": chainId,
+	})
+}
+
+// getSolidaryBurnCrossPaged 分页查询 solidary_sync_event × burn_event_old 交集
+// GET /api/solidary-burn-cross/paged?chainId=2&page=0&size=100&sortBy=syncRepeatCount
+// Join: solidary_sync_event s INNER JOIN burn_event_old o
+//   ON s.chain_id = o.chain_id AND s.address = o.from_addr
+// 返回两边字段：chainId/address/syncTxHash/syncRepeatCount/burnTxHash/burnRepeatCount
+func (c *BeholderController) getSolidaryBurnCrossPaged(ctx *gin.Context) {
+	chainId, _ := strconv.Atoi(ctx.DefaultQuery("chainId", "2"))
+	page, _ := strconv.Atoi(ctx.DefaultQuery("page", "0"))
+	size, _ := strconv.Atoi(ctx.DefaultQuery("size", "100"))
+	sortBy := ctx.DefaultQuery("sortBy", "syncRepeatCount")
+
+	if size <= 0 || size > 1000 {
+		size = 100
+	}
+	if page < 0 {
+		page = 0
+	}
+
+	// 排序白名单（防注入）；别名映射到原始列
+	validSort := map[string]string{
+		"syncRepeatCount":  "s.repeat_count DESC",
+		"burnRepeatCount":  "o.repeat_count DESC",
+		"address":          "s.address ASC",
+	}
+	orderClause, ok := validSort[sortBy]
+	if !ok {
+		orderClause = "s.repeat_count DESC"
+	}
+
+	// 内连接查询（原始 SQL，避免 GORM 在跨表无模型时拼接复杂）
+	// LEFT JOIN input 表（键：chain_id + address=pair 地址）带出 status/input，可能为 NULL
+	selectSQL := `
+		SELECT
+			s.chain_id        AS chain_id,
+			s.address         AS address,
+			s.tx_hash         AS sync_tx_hash,
+			s.repeat_count    AS sync_repeat_count,
+			o.tx_hash         AS burn_tx_hash,
+			o.repeat_count    AS burn_repeat_count,
+			i.status          AS status,
+			i.input           AS input
+		FROM solidary_sync_event s
+		INNER JOIN burn_event_old o
+		  ON s.chain_id = o.chain_id AND s.address = o.from_addr
+		LEFT JOIN input i
+		  ON i.chain_id = s.chain_id AND i.address = s.address
+		WHERE s.chain_id = ?
+		ORDER BY ` + orderClause + `
+		LIMIT ? OFFSET ?`
+
+	type crossRow struct {
+		ChainID          int     `gorm:"column:chain_id" json:"chainId"`
+		Address          string  `gorm:"column:address" json:"address"`
+		SyncTxHash       string  `gorm:"column:sync_tx_hash" json:"syncTxHash"`
+		SyncRepeatCount  int     `gorm:"column:sync_repeat_count" json:"syncRepeatCount"`
+		BurnTxHash       string  `gorm:"column:burn_tx_hash" json:"burnTxHash"`
+		BurnRepeatCount  int     `gorm:"column:burn_repeat_count" json:"burnRepeatCount"`
+		Status           *int    `gorm:"column:status" json:"status"`
+		Input            *string `gorm:"column:input" json:"input"`
+	}
+
+	var rows []crossRow
+	if err := c.db.Raw(selectSQL, chainId, size, page*size).Scan(&rows).Error; err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 统计总数
+	countSQL := `
+		SELECT COUNT(*)
+		FROM solidary_sync_event s
+		INNER JOIN burn_event_old o
+		  ON s.chain_id = o.chain_id AND s.address = o.from_addr
+		LEFT JOIN input i
+		  ON i.chain_id = s.chain_id AND i.address = s.address
+		WHERE s.chain_id = ?`
+	var total int
+	c.db.Raw(countSQL, chainId).Count(&total)
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"content": rows,
+		"total":   total,
+		"page":    page,
+		"size":    size,
+		"chainId": chainId,
+	})
+}
+
+// getSolidarySyncsPaged 分页查询 solidary_sync_event 表
+// GET /api/solidary-syncs/paged?chainId=2&page=0&size=100&sortBy=repeatCount
+func (c *BeholderController) getSolidarySyncsPaged(ctx *gin.Context) {
+	chainId, _ := strconv.Atoi(ctx.DefaultQuery("chainId", "2"))
+	page, _ := strconv.Atoi(ctx.DefaultQuery("page", "0"))
+	size, _ := strconv.Atoi(ctx.DefaultQuery("size", "100"))
+	sortBy := ctx.DefaultQuery("sortBy", "repeatCount")
+
+	if size <= 0 || size > 1000 {
+		size = 100
+	}
+	if page < 0 {
+		page = 0
+	}
+
+	validSort := map[string]string{
+		"repeatCount": "repeat_count DESC",
+		"address":     "address ASC",
+		"txHash":      "tx_hash DESC",
+	}
+	orderClause, ok := validSort[sortBy]
+	if !ok {
+		orderClause = "repeat_count DESC"
+	}
+
+	var total int
+	c.db.Table("solidary_sync_event").Where("chain_id = ?", chainId).Count(&total)
+
+	var rows []modelcommon.SolidarySyncEvent
+	c.db.Where("chain_id = ?", chainId).
+		Order(orderClause).
+		Offset(page * size).Limit(size).
+		Find(&rows)
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"content": rows,
+		"total":   total,
+		"page":    page,
+		"size":    size,
+		"chainId": chainId,
+	})
 }
