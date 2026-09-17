@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    * { box-sizing: border-box; }
+    body { font: 12px/1.6 'Segoe UI', sans-serif; width: 380px; margin: 0; padding: 12px; color: #ddd; background: #1e1e1e; }
+    h3 { margin: 0 0 8px; font-size: 13px; color: #9cdcfe; }
+    section { margin-bottom: 14px; }
+    label { display: block; margin: 6px 0 2px; color: #bbb; }
+    input[type=text] { width: 100%; padding: 4px 6px; background: #2a2a2a; color: #ddd; border: 1px solid #3c3c3c; border-radius: 3px; }
+    .row { display: flex; gap: 6px; align-items: center; margin: 2px 0; }
+    .row input.rule-pattern { flex: 2; }
+    .row input.rule-method { flex: 0 0 64px; }
+    .row input.rule-body { flex: 2; }
+    button { background: #0e639c; color: #fff; border: none; padding: 4px 10px; cursor: pointer; border-radius: 3px; font-size: 12px; }
+    button:hover { background: #1177bb; }
+    button.del { background: transparent; color: #f48771; padding: 2px 6px; }
+    button.small { padding: 2px 8px; }
+    .switch { display: flex; align-items: center; gap: 8px; }
+    #testResult { margin-left: 8px; color: #6a9955; }
+    #testResult.err { color: #f48771; }
+    .hint { color: #808080; font-size: 11px; margin-top: 4px; }
+    .empty { color: #808080; }
+  </style>
+</head>
+<body>
+  <h3>Beholder 捕获器设置</h3>
+
+  <section>
+    <label>后端地址</label>
+    <div class="row">
+      <input type="text" id="backendUrl" placeholder="http://127.0.0.1:8090">
+      <button id="saveBackend">保存</button>
+      <button id="testConn">测试</button>
+      <span id="testResult"></span>
+    </div>
+    <div class="hint">上报接口：POST {后端}/api/extension/capture；查询：GET {后端}/api/extension/captures</div>
+  </section>
+
+  <section>
+    <div class="switch">
+      <input type="checkbox" id="bgEnabled">
+      <label for="bgEnabled" style="margin:0">后台自动捕获（附加所有网页标签页，页面顶部会出现调试横幅）</label>
+    </div>
+  </section>
+
+  <section>
+    <div class="switch">
+      <input type="checkbox" id="autoSend">
+      <label for="autoSend" style="margin:0">DevTools 面板内匹配规则自动发送</label>
+    </div>
+  </section>
+
+  <section>
+    <label>匹配规则（URL 正则必填；方法可空 = 任意；响应体正则可选，仅对文本响应生效）</label>
+    <div id="rules"></div>
+    <div class="row" style="margin-top:6px">
+      <button id="addRule" class="small">+ 添加规则</button>
+    </div>
+  </section>
+
+  <script src="settings.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>
