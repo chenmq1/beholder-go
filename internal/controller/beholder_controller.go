@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
 	instantcommon "github.com/beholder-daemon/internal/service/instant-common"
 	"github.com/beholder-daemon/internal/model"
@@ -20,10 +21,12 @@ import (
 
 // BeholderController 处理 API 请求
 type BeholderController struct {
-	db               *gorm.DB
-	publisher        *service.RabbitMQPublisher
-	approvalInstant  *instantcommon.ApprovalInstantService
-	watchlistSvc     *watchlist.Service
+	db              *gorm.DB
+	publisher       *service.RabbitMQPublisher
+	approvalInstant *instantcommon.ApprovalInstantService
+	eventInstant    *instantcommon.EventInstantService
+	txVerifyInstant *instantcommon.TxVerifyService
+	watchlistSvc    *watchlist.Service
 }
 
 // NewBeholderController 创建 BeholderController 实例
@@ -32,6 +35,8 @@ func NewBeholderController(db *gorm.DB, publisher *service.RabbitMQPublisher, cl
 		db:              db,
 		publisher:       publisher,
 		approvalInstant: instantcommon.NewApprovalInstantService(clients),
+		eventInstant:    instantcommon.NewEventInstantService(clients, db),
+		txVerifyInstant: instantcommon.NewTxVerifyService(clients, db),
 		watchlistSvc:    watchlist.NewService(db, clients),
 	}
 }
@@ -66,6 +71,9 @@ func (c *BeholderController) RegisterRoutes(router *gin.Engine) {
 		instant := api.Group("/instant")
 		{
 			instant.GET("/approvals", c.getApprovals)
+			instant.GET("/events", c.getEvents)
+			instant.GET("/temp-events", c.getTempEvents)
+			instant.POST("/tx-verify", c.postTxVerify)
 		}
 
 		// 通用任务发送：直接把前端组装的 JSON 投递到 MQ，不依赖预设的 taskMessages
@@ -168,6 +176,145 @@ func (c *BeholderController) getApprovals(ctx *gin.Context) {
 		"scannedStart":  scannedStart,
 		"scannedEnd":    scannedEnd,
 		"content":       results,
+	})
+}
+
+// getEvents 即时通用事件查询（按用户指定 topic0/1/2 与 address 过滤，可选单字段去重，不入库）
+//
+//	Query: chainId（默认 1）、address（可选）、topic0/1/2（可选 0x hash）、
+//	       dedupField（可选 "" / topic1 / topic2 / address / txHash / blockNumber）、
+//	       startBlock（可选）、endBlock（可选）
+func (c *BeholderController) getEvents(ctx *gin.Context) {
+	chainId, err := strconv.Atoi(ctx.DefaultQuery("chainId", "1"))
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "chainId 参数无效"})
+		return
+	}
+	address := ctx.Query("address")
+	topic0 := ctx.Query("topic0")
+	topic1 := ctx.Query("topic1")
+	topic2 := ctx.Query("topic2")
+	dedupField := ctx.Query("dedupField")
+	// persist 开关：前端 checkbox 上传 "true"/"1" 视为开启
+	persist := false
+	if pv := ctx.DefaultQuery("persist", "false"); pv == "true" || pv == "1" {
+		persist = true
+	}
+
+	var startBlock, endBlock uint64
+	if sb := ctx.Query("startBlock"); sb != "" {
+		if startBlock, err = strconv.ParseUint(sb, 10, 64); err != nil {
+			ctx.JSON(http.StatusBadRequest, gin.H{"error": "startBlock 参数无效"})
+			return
+		}
+	}
+	if eb := ctx.Query("endBlock"); eb != "" {
+		if endBlock, err = strconv.ParseUint(eb, 10, 64); err != nil {
+			ctx.JSON(http.StatusBadRequest, gin.H{"error": "endBlock 参数无效"})
+			return
+		}
+	}
+
+	results, scannedStart, scannedEnd, err := c.eventInstant.GetEvents(ctx.Request.Context(), chainId, address, topic0, topic1, topic2, dedupField, startBlock, endBlock, persist)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"chainId":      chainId,
+		"address":      address,
+		"topic0":       topic0,
+		"topic1":       topic1,
+		"topic2":       topic2,
+		"dedupField":   dedupField,
+		"persist":      persist,
+		"count":        len(results),
+		"scannedStart": scannedStart,
+		"scannedEnd":   scannedEnd,
+		"content":      results,
+	})
+}
+
+// getTempEvents 查询临时表 event_query_temp，支持按 status 筛选。
+//
+//	Query: chainId（可选，缺省不过滤链）、
+//	       status（可选：数字=精确匹配；"null"=status IS NULL；缺省=不过滤）
+//
+// 注意 status 不用 DefaultQuery 给默认值——缺省必须语义为"不过滤"，
+// 不能误当成某个具体状态。
+func (c *BeholderController) getTempEvents(ctx *gin.Context) {
+	chainId := 0
+	if cv := strings.TrimSpace(ctx.Query("chainId")); cv != "" {
+		v, err := strconv.Atoi(cv)
+		if err != nil {
+			ctx.JSON(http.StatusBadRequest, gin.H{"error": "chainId 参数无效"})
+			return
+		}
+		chainId = v
+	}
+
+	var statusPtr *int
+	statusIsNull := false
+	if sv := strings.TrimSpace(ctx.Query("status")); sv != "" {
+		if strings.EqualFold(sv, "null") {
+			statusIsNull = true
+		} else {
+			v, err := strconv.Atoi(sv)
+			if err != nil {
+				ctx.JSON(http.StatusBadRequest, gin.H{"error": "status 参数无效（支持数字或 null）"})
+				return
+			}
+			statusPtr = &v
+		}
+	}
+
+	results, err := c.eventInstant.ListTemp(chainId, statusPtr, statusIsNull)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	statusFilter := "全部"
+	switch {
+	case statusIsNull:
+		statusFilter = "NULL"
+	case statusPtr != nil:
+		statusFilter = strconv.Itoa(*statusPtr)
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"chainId":      chainId,
+		"statusFilter": statusFilter,
+		"count":        len(results),
+		"content":      results,
+	})
+}
+
+// postTxVerify 触发交易核验：逐条查临时表中的 tx，按配置比较两侧地址并回写 status。
+//
+//	Body: TxVerifyConfig（chainId 必填，其余字段可选——缺省取 service 默认：
+//	      txField=from, eventField=topic1, matchStatus=0, mismatchStatus=1,
+//	      onlyNull=true, maxWorkers=18）
+func (c *BeholderController) postTxVerify(ctx *gin.Context) {
+	var cfg instantcommon.TxVerifyConfig
+	if err := ctx.ShouldBindJSON(&cfg); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "请求体无效: " + err.Error()})
+		return
+	}
+	if cfg.ChainID == 0 {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "chainId 必填"})
+		return
+	}
+
+	result, err := c.txVerifyInstant.VerifyTransactions(ctx.Request.Context(), cfg)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	ctx.JSON(http.StatusOK, gin.H{
+		"chainId": cfg.ChainID,
+		"result":  result,
 	})
 }
 

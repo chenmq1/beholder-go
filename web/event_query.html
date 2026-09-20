@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>通用事件即时查询</title>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+            margin: 0; padding: 24px; background: #f5f7fa; color: #1f2d3d;
+        }
+        h1 { font-size: 20px; margin: 0 0 16px; }
+        .card {
+            background: #fff; border-radius: 8px; padding: 20px;
+            box-shadow: 0 1px 4px rgba(0,0,0,.08); margin-bottom: 20px;
+        }
+        .form-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; }
+        .field { display: flex; flex-direction: column; gap: 4px; }
+        .field.grow { flex: 1; min-width: 320px; }
+        label { font-size: 12px; color: #606266; }
+        input, select {
+            border: 1px solid #dcdfe6; border-radius: 4px; padding: 8px 10px;
+            font-size: 14px; outline: none; background: #fff;
+        }
+        input:focus, select:focus { border-color: #409eff; }
+        button {
+            background: #409eff; color: #fff; border: none; border-radius: 4px;
+            padding: 9px 20px; font-size: 14px; cursor: pointer; height: 36px;
+        }
+        button:hover { background: #66b1ff; }
+        button:disabled { background: #a0cfff; cursor: not-allowed; }
+        .hint { font-size: 12px; color: #909399; margin-top: 4px; }
+        .meta { font-size: 13px; color: #606266; margin-bottom: 12px; }
+        .meta b { color: #1f2d3d; }
+        table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid #ebeef5; }
+        th { background: #fafafa; color: #606266; font-weight: 600; position: sticky; top: 0; }
+        td.addr { font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+        td.num { text-align: right; font-family: ui-monospace, Consolas, monospace; }
+        a.tx { color: #409eff; text-decoration: none; }
+        a.tx:hover { text-decoration: underline; }
+        .status { padding: 24px; text-align: center; color: #909399; font-size: 14px; }
+        .error { color: #f56c6c; }
+        .table-wrap { max-height: 60vh; overflow: auto; border: 1px solid #ebeef5; border-radius: 4px; }
+        nav.top { background: #1f2d3d; padding: 0 24px; margin: -24px -24px 20px; height: 48px;
+            display: flex; align-items: center; gap: 8px; }
+        nav.top a { color: #c0c4cc; text-decoration: none; padding: 6px 14px; border-radius: 4px;
+            font-size: 14px; }
+        nav.top a:hover { background: rgba(255,255,255,.1); color: #fff; }
+        nav.top a.active { background: #409eff; color: #fff; }
+    </style>
+</head>
+<body>
+    <nav class="top" data-active="/event-query"></nav>
+    <script src="/web/nav.js"></script>
+    <h1>通用事件即时查询</h1>
+    <div class="card">
+        <div class="form-row">
+            <div class="field">
+                <label>链</label>
+                <select id="chainId">
+                    <option value="1">1 · Ethereum</option>
+                    <option value="2">2 · BSC</option>
+                    <option value="3">3 · Polygon</option>
+                    <option value="4">4 · Arbitrum</option>
+                    <option value="5">5 · Base</option>
+                    <option value="6">6 · Optimism</option>
+                </select>
+            </div>
+            <div class="field grow">
+                <label>合约地址 address（可选）</label>
+                <input id="address" type="text" placeholder="0x... 仅查该合约发出的事件">
+            </div>
+            <div class="field grow">
+                <label>topic0（可选，下拉选或手动输入）</label>
+                <input id="topic0" type="text" list="topic0Suggestions" placeholder="0x...">
+                <datalist id="topic0Suggestions">
+                    <option value="0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925">Approval · ERC20 Approval(address indexed owner, address indexed spender, uint256 value)</option>
+                    <option value="0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef">Transfer · ERC20 Transfer(address indexed from, address indexed to, uint256 value)</option>
+                    <option value="0x1c411e9a96e071241c2f21f7726b17ae89e3cab4c78be50e062b03a9fffbbad1">Sync · Uniswap V2 Sync(uint112 reserve0, uint112 reserve1)</option>
+                    <option value="0xd78ad95fa46c994b6551d0da85fc275fe613ce37657fb8d5e3d130840159d822">SwapV2 · Uniswap V2 Swap(address indexed sender, uint amount0In, uint amount1In, uint amount0Out, uint amount1Out, address indexed to)</option>
+                    <option value="0xc42079f94a6350d7e6235f29174924f928cc2ac818eb64fed8004e115fbcca67">SwapV3 · Uniswap V3 Swap(address indexed sender, address recipient, int256 amount0, int256 amount1, uint160 sqrtPriceX96, uint128 liquidity, int24 tick)</option>
+                    <option value="0x0d3648bd0f6ba80134a33ba9275ac585d9d315f0ad8355cddefde31afa28d0e9">PairCreated · Uniswap V2 Factory PairCreated(address indexed token0, address indexed token1, address pair, uint)</option>
+                    <option value="0x4c209b5fc8ad50758f13e2e1088ba56a560dff690a1c6fef26394f4c03821c4f">Mint · Uniswap V2 Mint(address indexed sender, uint256 amount0, uint256 amount1)</option>
+                    <option value="0xdccd412f0b1252819cb1fd330b93224ca42612892bb3f4f789976e6d81936496">Burn · Uniswap V2 Burn(address indexed sender, uint256 amount0, uint256 amount1, address indexed to)</option>
+                </datalist>
+            </div>
+            <div class="field grow">
+                <label>topic1（可选）</label>
+                <input id="topic1" type="text" placeholder="0x...">
+            </div>
+            <div class="field grow">
+                <label>topic2（可选）</label>
+                <input id="topic2" type="text" placeholder="0x...">
+            </div>
+            <div class="field">
+                <label>去重字段</label>
+                <select id="dedupField">
+                    <option value="">不去重</option>
+                    <option value="topic1">topic1</option>
+                    <option value="topic2">topic2</option>
+                    <option value="address">address</option>
+                    <option value="txHash">txHash</option>
+                    <option value="blockNumber">blockNumber</option>
+                </select>
+            </div>
+            <div class="field">
+                <label>起始区块（可选）</label>
+                <input id="startBlock" type="text" placeholder="留空=回溯 10000">
+            </div>
+            <div class="field">
+                <label>截止区块（可选）</label>
+                <input id="endBlock" type="text" placeholder="留空=最新">
+            </div>
+            <div class="field" style="justify-content:flex-end;">
+                <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;color:#1f2d3d;">
+                    <input id="persist" type="checkbox" style="width:auto;">
+                    存入临时表
+                </label>
+            </div>
+            <div class="field">
+                <button id="queryBtn" onclick="query()">查询</button>
+            </div>
+        </div>
+        <div class="form-row" style="margin-top:14px;padding-top:12px;border-top:1px dashed #ebeef5;">
+            <div class="field grow">
+                <label>按 status 筛选临时表（数字精确匹配；null=未处理；留空=全部）</label>
+                <input id="tempStatus" type="text" placeholder="例如 1 / 0 / null，留空返回全部">
+            </div>
+            <div class="field">
+                <button id="tempQueryBtn" onclick="queryTemp()">查临时表</button>
+            </div>
+        </div>
+
+        <div class="form-row" style="margin-top:14px;padding-top:12px;border-top:1px dashed #ebeef5;">
+            <div class="field">
+                <label>交易字段 txField</label>
+                <select id="vTxField">
+                    <option value="from">from · sender</option>
+                    <option value="to">to · 收款方</option>
+                </select>
+            </div>
+            <div class="field">
+                <label>事件字段 eventField</label>
+                <select id="vEventField">
+                    <option value="topic1">topic1</option>
+                    <option value="topic2">topic2</option>
+                    <option value="address">address</option>
+                </select>
+            </div>
+            <div class="field">
+                <label>相等回写 matchStatus</label>
+                <input id="vMatch" type="number" value="0" style="width:90px;">
+            </div>
+            <div class="field">
+                <label>不等回写 mismatchStatus</label>
+                <input id="vMismatch" type="number" value="1" style="width:90px;">
+            </div>
+            <div class="field">
+                <label>处理范围 scope</label>
+                <select id="vScope">
+                    <option value="null">仅 status IS NULL</option>
+                    <option value="all">全部行</option>
+                    <option value="status">仅指定 status</option>
+                </select>
+            </div>
+            <div class="field">
+                <label>指定 status（配合上一项）</label>
+                <input id="vOnlyStatus" type="number" placeholder="例如 1" style="width:110px;">
+            </div>
+            <div class="field">
+                <label>并发 workers</label>
+                <input id="vWorkers" type="number" value="18" style="width:80px;">
+            </div>
+            <div class="field">
+                <button id="verifyBtn" onclick="verifyTxs()">核验交易并回写</button>
+            </div>
+        </div>
+        <div id="verifyResult" class="hint" style="display:none;margin-top:10px;"></div>
+
+        <div class="hint">空槽位 topic 视为通配；去重时空字段=保留全部事件。开启"存入临时表"会把本次查询结果写入 event_query_temp（先清空再写入，非累积）。</div>
+    </div>
+
+    <div class="card">
+        <div id="meta" class="meta" style="display:none;"></div>
+        <div id="status" class="status">请填写参数后点击查询</div>
+        <div class="table-wrap" id="tableWrap" style="display:none;">
+            <table>
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>Block</th>
+                        <th>TxHash</th>
+                        <th>Address</th>
+                        <th>Status</th>
+                        <th>Topic0</th>
+                        <th>Topic1</th>
+                        <th>Topic2</th>
+                        <th>Data</th>
+                        <th style="text-align:right;">重复次数</th>
+                    </tr>
+                </thead>
+                <tbody id="tbody"></tbody>
+            </table>
+        </div>
+    </div>
+
+<script>
+    // Phalcon 交易页：https://app.blocksec.com/phalcon/explorer/tx/<chain>/<tx>?line=0
+    const phalconChainByChain = {
+        1: "ethereum",
+        2: "bsc",
+        3: "polygon",
+        4: "arbitrum",
+        5: "base",
+        6: "optimism"
+    };
+    // 地址浏览器（地址列使用）
+    const explorerByChain = {
+        1: "https://etherscan.io",
+        2: "https://bscscan.com",
+        3: "https://polygonscan.com",
+        4: "https://arbiscan.io",
+        5: "https://basescan.org",
+        6: "https://optimistic.etherscan.io"
+    };
+
+    function shortAddr(addr) {
+        if (!addr) return "";
+        return addr.slice(0, 8) + "..." + addr.slice(-6);
+    }
+
+    function shortHash(h) {
+        if (!h) return "";
+        return h.slice(0, 10) + "..." + h.slice(-6);
+    }
+
+    // normalizeTopicInput 把 20 字节地址（0x + 40 hex）规范化为 32 字节 topic
+    // （0x + 64 hex，左侧补 24 字节 0），与以太坊 indexed address 作为 topic 的存储格式一致。
+    // 已是 64 hex 的 topic 原样返回；非法格式返回原值（交由后端校验报错）。
+    function normalizeTopicInput(v) {
+        v = (v || "").trim();
+        if (/^0x[0-9a-fA-F]{40}$/.test(v)) {
+            return "0x" + "0".repeat(24) + v.slice(2).toLowerCase();
+        }
+        return v;
+    }
+
+    function txCell(txHash, chainId) {
+        if (!txHash) return '<td class="addr"></td>';
+        const phalconChain = phalconChainByChain[chainId] || "ethereum";
+        const href = `https://app.blocksec.com/phalcon/explorer/tx/${phalconChain}/${txHash}?line=0`;
+        return `<td class="addr"><a class="tx" href="${href}" target="_blank" title="${txHash}">${shortHash(txHash)}</a></td>`;
+    }
+
+    function addrCell(addr, chainId) {
+        if (!addr) return '<td class="addr"></td>';
+        const explorer = explorerByChain[chainId] || "";
+        return `<td class="addr"><a class="tx" href="${explorer}/address/${addr}" target="_blank" title="${addr}">${shortAddr(addr)}</a></td>`;
+    }
+
+    function hashCell(h) {
+        if (!h) return '<td class="addr"></td>';
+        return `<td class="addr" title="${h}">${shortHash(h)}</td>`;
+    }
+
+    // topic1/2 单元格：地址形态（0x + 24 字节 0 + 40 位 hex）加浏览器链接，其余按 hash 展示
+    function topicCell(v, chainId) {
+        if (!v) return '<td class="addr"></td>';
+        if (/^0x0{24}[0-9a-f]{40}$/.test(v)) {
+            return addrCell(v, chainId);
+        }
+        return hashCell(v);
+    }
+
+    // status 单元格：null/undefined 显示灰色 NULL
+    function statusCell(e) {
+        if (e.status === null || e.status === undefined) {
+            return '<td class="num" style="color:#c0c4cc;">NULL</td>';
+        }
+        return `<td class="num">${e.status}</td>`;
+    }
+
+    function rowHtml(e, i, chainId) {
+        return `
+                <tr>
+                    <td>${i + 1}</td>
+                    <td class="num">${e.blockNumber}</td>
+                    ${txCell(e.txHash, chainId)}
+                    ${addrCell(e.address, chainId)}
+                    ${statusCell(e)}
+                    ${hashCell(e.topic0)}
+                    ${topicCell(e.topic1, chainId)}
+                    ${topicCell(e.topic2, chainId)}
+                    <td class="addr" title="${e.data}">${e.data ? shortHash(e.data) : ""}</td>
+                    <td class="num">${e.repeatCount}</td>
+                </tr>`;
+    }
+
+    // showResults 统一渲染 meta + 表格（链上查询与临时表查询共用）
+    function showResults(chainId, metaHtml, content, emptyMsg) {
+        const statusEl = document.getElementById("status");
+        const metaEl = document.getElementById("meta");
+        const tableWrap = document.getElementById("tableWrap");
+        const tbody = document.getElementById("tbody");
+        metaEl.innerHTML = metaHtml;
+        metaEl.style.display = "block";
+        if (!content.length) {
+            statusEl.className = "status";
+            statusEl.textContent = emptyMsg;
+            statusEl.style.display = "block";
+            tableWrap.style.display = "none";
+            tbody.innerHTML = "";
+            return;
+        }
+        statusEl.style.display = "none";
+        tableWrap.style.display = "block";
+        tbody.innerHTML = content.map((e, i) => rowHtml(e, i, chainId)).join("");
+    }
+
+    async function query() {
+        const chainId = document.getElementById("chainId").value;
+        const address = document.getElementById("address").value.trim();
+        const topic0 = document.getElementById("topic0").value.trim();
+        // topic1/2 若输入了 20 字节地址，规范化为 32 字节 topic（左补 24 字节 0）
+        const topic1 = normalizeTopicInput(document.getElementById("topic1").value);
+        const topic2 = normalizeTopicInput(document.getElementById("topic2").value);
+        const dedupField = document.getElementById("dedupField").value;
+        const persist = document.getElementById("persist").checked;
+        const startBlock = document.getElementById("startBlock").value.trim();
+        const endBlock = document.getElementById("endBlock").value.trim();
+
+        const statusEl = document.getElementById("status");
+        const metaEl = document.getElementById("meta");
+        const tableWrap = document.getElementById("tableWrap");
+        const tbody = document.getElementById("tbody");
+        const btn = document.getElementById("queryBtn");
+
+        // 至少给一个过滤条件，避免全节点扫描
+        if (!address && !topic0 && !topic1 && !topic2) {
+            statusEl.className = "status error";
+            statusEl.textContent = "请至少提供 address 或某个 topic 作为过滤条件";
+            statusEl.style.display = "block";
+            metaEl.style.display = "none";
+            tableWrap.style.display = "none";
+            return;
+        }
+
+        const params = new URLSearchParams({ chainId, dedupField, persist: persist ? "true" : "false" });
+        if (address) params.set("address", address);
+        if (topic0) params.set("topic0", topic0);
+        if (topic1) params.set("topic1", topic1);
+        if (topic2) params.set("topic2", topic2);
+        if (startBlock) params.set("startBlock", startBlock);
+        if (endBlock) params.set("endBlock", endBlock);
+
+        btn.disabled = true;
+        statusEl.className = "status";
+        statusEl.textContent = "查询中...";
+        statusEl.style.display = "block";
+        metaEl.style.display = "none";
+        tableWrap.style.display = "none";
+        tbody.innerHTML = "";
+
+        try {
+            const resp = await fetch(`/api/instant/events?${params.toString()}`);
+            const data = await resp.json();
+            if (!resp.ok) {
+                throw new Error(data.error || `HTTP ${resp.status}`);
+            }
+            const content = (data.content || []).slice().sort((a, b) => b.repeatCount - a.repeatCount);
+            const dedupLabel = data.dedupField || "不去重";
+            const persistTag = data.persist ? ' · <span style="color:#67c23a;">已存入临时表 event_query_temp</span>' : "";
+            const metaHtml = `链 <b>${data.chainId}</b> · 去重 <b>${dedupLabel}</b> · 共 <b>${data.count}</b> 条 · 实际扫描区块 <b>${data.scannedStart}</b> – <b>${data.scannedEnd}</b>${persistTag}`;
+            showResults(data.chainId, metaHtml, content, `无匹配事件（已扫描区块 ${data.scannedStart} – ${data.scannedEnd}）`);
+        } catch (err) {
+            statusEl.className = "status error";
+            statusEl.textContent = "查询失败：" + err.message;
+            statusEl.style.display = "block";
+        } finally {
+            btn.disabled = false;
+        }
+    }
+
+    // queryTemp 直接查临时表 event_query_temp（数据源是上一次 persist 的快照），
+    // 按 tempStatus 输入筛选：数字精确匹配，null=IS NULL，留空=全部
+    async function queryTemp() {
+        const chainId = document.getElementById("chainId").value;
+        const statusRaw = document.getElementById("tempStatus").value.trim();
+
+        const statusEl = document.getElementById("status");
+        const metaEl = document.getElementById("meta");
+        const tableWrap = document.getElementById("tableWrap");
+        const btn = document.getElementById("tempQueryBtn");
+
+        const params = new URLSearchParams({ chainId });
+        if (statusRaw) params.set("status", statusRaw);
+
+        btn.disabled = true;
+        statusEl.className = "status";
+        statusEl.textContent = "查询临时表中...";
+        statusEl.style.display = "block";
+        metaEl.style.display = "none";
+        tableWrap.style.display = "none";
+
+        try {
+            const resp = await fetch(`/api/instant/temp-events?${params.toString()}`);
+            const data = await resp.json();
+            if (!resp.ok) {
+                throw new Error(data.error || `HTTP ${resp.status}`);
+            }
+            const content = data.content || [];
+            const metaHtml = `临时表 <b>event_query_temp</b> · 链 <b>${chainId}</b> · 状态筛选 <b>${data.statusFilter}</b> · 共 <b>${data.count}</b> 条`;
+            showResults(Number(chainId), metaHtml, content, "临时表中无匹配记录");
+        } catch (err) {
+            statusEl.className = "status error";
+            statusEl.textContent = "查询临时表失败：" + err.message;
+            statusEl.style.display = "block";
+        } finally {
+            btn.disabled = false;
+        }
+    }
+
+    // verifyTxs 触发交易核验：POST TxVerifyConfig，展示统计与失败明细
+    async function verifyTxs() {
+        const chainId = Number(document.getElementById("chainId").value);
+        const scope = document.getElementById("vScope").value;
+
+        const cfg = {
+            chainId,
+            txField: document.getElementById("vTxField").value,
+            eventField: document.getElementById("vEventField").value,
+            matchStatus: Number(document.getElementById("vMatch").value || 0),
+            mismatchStatus: document.getElementById("vMismatch").value === "" ? 1 : Number(document.getElementById("vMismatch").value),
+            onlyNull: scope === "null",
+            onlyStatus: null,
+            maxWorkers: Number(document.getElementById("vWorkers").value || 18)
+        };
+        if (scope === "status") {
+            const os = document.getElementById("vOnlyStatus").value.trim();
+            if (os === "") {
+                alert('处理范围选了"仅指定 status"，请填写具体 status');
+                return;
+            }
+            cfg.onlyStatus = Number(os);
+        }
+
+        const btn = document.getElementById("verifyBtn");
+        const resultEl = document.getElementById("verifyResult");
+        btn.disabled = true;
+        resultEl.style.display = "block";
+        resultEl.style.color = "#909399";
+        resultEl.textContent = "核验中...（逐条 web3 查询，数据量大时请等待）";
+
+        try {
+            const resp = await fetch("/api/instant/tx-verify", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(cfg)
+            });
+            const data = await resp.json();
+            if (!resp.ok) {
+                throw new Error(data.error || `HTTP ${resp.status}`);
+            }
+            const r = data.result;
+            let html = `核验完成 · 共 <b style="color:#1f2d3d;">${r.total}</b> 行：`
+                + ` <span style="color:#67c23a;">相等 ${r.matched}</span>`
+                + ` · <span style="color:#e6a23c;">不等 ${r.mismatched}</span>`
+                + ` · <span style="color:#f56c6c;">失败 ${r.failed}</span>`;
+            if (r.failures && r.failures.length) {
+                html += "<br>失败明细（前 " + r.failures.length + " 条，失败行未回写）："
+                    + r.failures.map(f => `<div style="color:#f56c6c;">#${f.id} ${f.txHash} — ${f.reason}</div>`).join("");
+            }
+            resultEl.innerHTML = html;
+            resultEl.style.color = "#606266";
+        } catch (err) {
+            resultEl.style.color = "#f56c6c";
+            resultEl.textContent = "核验失败：" + err.message;
+        } finally {
+            btn.disabled = false;
+        }
+    }
+
+    document.getElementById("topic0").addEventListener("keypress", (e) => {
+        if (e.key === "Enter") query();
+    });
+    // topic1/2 失焦时若输入的是 20 字节地址，即时规范化为 32 字节 topic 显示
+    ["topic1", "topic2"].forEach(id => {
+        const el = document.getElementById(id);
+        el.addEventListener("blur", () => {
+            const v = el.value.trim();
+            const normalized = normalizeTopicInput(v);
+            if (normalized !== v) el.value = normalized;
+        });
+        el.addEventListener("keypress", (e) => {
+            if (e.key === "Enter") query();
+        });
+    });
+    document.getElementById("tempStatus").addEventListener("keypress", (e) => {
+        if (e.key === "Enter") queryTemp();
+    });
+</script>
+</body>
+</html>

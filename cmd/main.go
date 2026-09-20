@@ -84,8 +84,14 @@ func main() {
 	beholderController := controller.NewBeholderController(db, publisher, web3Clients)
 	beholderController.RegisterRoutes(r)
 
+	// 浏览器扩展上报（/api/extension/*，内存环形缓存，不入库）
+	extensionController := controller.NewExtensionController()
+	extensionController.RegisterRoutes(r)
+
 	// 前端页面：即时 Approval 查询
 	r.StaticFile("/approval", "./web/approval.html")
+	// 前端页面：通用事件即时查询（按 topic/address 过滤、可选单字段去重）
+	r.StaticFile("/event-query", "./web/event_query.html")
 	// 前端页面：pair ↔ sync ↔ burn 视图
 	r.StaticFile("/pair-sync-burn", "./web/pair_sync_burn.html")
 	// 前端页面：burn_event 直接查询
@@ -98,6 +104,8 @@ func main() {
 	r.StaticFile("/send-event", "./web/send_event.html")
 	// 前端页面：函数调用监控（watchlist）
 	r.StaticFile("/watchlist", "./web/watchlist.html")
+	// 前端共享资源：全局顶部菜单脚本（各页面用 <nav data-active> + <script src="/web/nav.js">）
+	r.StaticFile("/web/nav.js", "./web/nav.js")
 
 	// 获取服务端口
 	port := viper.GetInt("app.port")
