@@ -3,16 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Solidary Sync Events</title>
+    <title>Solidary Sync × PairCreated</title>
     <style>
         * { box-sizing: border-box; }
         body {
             font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
             margin: 0; padding: 24px; background: #f5f7fa; color: #1f2d3d;
         }
-        nav.top {
-            display: flex; gap: 8px; margin-bottom: 16px;
-        }
+        nav.top { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
         nav.top a {
             display: inline-block; padding: 6px 14px; border-radius: 4px;
             text-decoration: none; font-size: 13px; color: #409eff;
@@ -53,6 +51,8 @@
         .pager .info { font-size: 13px; color: #606266; }
         .pager button { height: 32px; padding: 6px 14px; }
         .pager button:disabled { background: #c0c4cc; cursor: not-allowed; }
+        .group-s { color: #67c23a; font-weight: 600; }
+        .group-p { color: #409eff; font-weight: 600; }
         button.mini {
             height: 26px; padding: 2px 10px; font-size: 12px; border-radius: 3px;
             background: #409eff; margin-right: 4px;
@@ -69,9 +69,9 @@
     </style>
 </head>
 <body>
-    <nav class="top" data-active="/solidary-sync-events"></nav>
+    <nav class="top" data-active="/solidary-pair-created"></nav>
     <script src="/web/nav.js"></script>
-    <h1>Solidary Sync Events（孤立 Sync，后面无 Swap）</h1>
+    <h1>Solidary Sync × PairCreated（交集：既在 solidary_sync 又在 pair_created_event）</h1>
     <div class="card">
         <div class="form-row">
             <div class="field">
@@ -88,16 +88,16 @@
             <div class="field">
                 <label>排序</label>
                 <select id="sortBy">
-                    <option value="repeatCount" selected>repeatCount 倒序</option>
+                    <option value="syncRepeatCount" selected>syncRepeatCount 倒序</option>
                     <option value="address">address 升序</option>
-                    <option value="txHash">txHash 倒序</option>
+                    <option value="createdBlock">createdBlock 升序</option>
                 </select>
             </div>
             <div class="field">
                 <button id="queryBtn" onclick="loadPage(0)">查询</button>
             </div>
         </div>
-        <div class="hint">默认 BSC；100 条/页；地址不缩写；txHash 链接到 Phalcon。</div>
+        <div class="hint">默认 BSC；100 条/页；地址不缩写；txHash 链接到 Phalcon。绿色列来自 solidary_sync_event，蓝色列来自 pair_created_event。</div>
     </div>
 
     <div class="card">
@@ -110,8 +110,12 @@
                         <th>#</th>
                         <th>chainId</th>
                         <th>address (pair)</th>
-                        <th>txHash</th>
-                        <th style="text-align:right;">repeatCount</th>
+                        <th class="group-s">syncTxHash</th>
+                        <th class="group-s" style="text-align:right;">syncRepeatCount</th>
+                        <th class="group-p">token0</th>
+                        <th class="group-p">token1</th>
+                        <th class="group-p">factory</th>
+                        <th class="group-p" style="text-align:right;">createdBlock</th>
                         <th style="text-align:right;">status</th>
                         <th>input</th>
                         <th>操作</th>
@@ -138,7 +142,7 @@
         5: "https://basescan.org", 6: "https://optimistic.etherscan.io"
     };
 
-    const state = { content: [], total: 0, page: 0, size: 100, chainId: 2, sortBy: "repeatCount", loading: false };
+    const state = { content: [], total: 0, page: 0, size: 100, chainId: 2, sortBy: "syncRepeatCount", loading: false };
     // 当前编辑行的 address（同一时刻只允许编辑一行）
     let editingAddr = null;
 
@@ -165,7 +169,6 @@
         const sortBy = document.getElementById("sortBy").value;
         if (page < 0) page = 0;
 
-        state.loading = true;
         document.getElementById("status").style.display = "block";
         document.getElementById("status").textContent = "加载中...";
         document.getElementById("status").className = "status";
@@ -174,7 +177,7 @@
         document.getElementById("meta").style.display = "none";
 
         try {
-            const url = `/api/solidary-syncs/paged?chainId=${chainId}&page=${page}&size=100&sortBy=${sortBy}`;
+            const url = `/api/solidary-pair-created/paged?chainId=${chainId}&page=${page}&size=100&sortBy=${sortBy}`;
             const res = await fetch(url);
             if (!res.ok) {
                 const errText = await res.text();
@@ -199,8 +202,6 @@
         } catch (e) {
             document.getElementById("status").textContent = "错误: " + e.message;
             document.getElementById("status").className = "status error";
-        } finally {
-            state.loading = false;
         }
     }
 
@@ -221,8 +222,12 @@
                 <td>${offset + i + 1}</td>
                 <td class="num">${e.chainId}</td>
                 ${addrCell(e.address, state.chainId)}
-                ${hashCell(e.txHash, state.chainId)}
-                <td class="num">${e.repeatCount}</td>
+                ${hashCell(e.syncTxHash, state.chainId)}
+                <td class="num group-s">${e.syncRepeatCount}</td>
+                ${addrCell(e.token0, state.chainId)}
+                ${addrCell(e.token1, state.chainId)}
+                ${addrCell(e.factory, state.chainId)}
+                <td class="num group-p">${e.createdBlock}</td>
                 ${editing ? `
                     <td class="num"><input class="cell-edit num-edit" type="number" id="edit-status" value="${status}"></td>
                     <td class="input-cell"><input class="cell-edit" type="text" id="edit-input" value="${escapeHtml(input)}"></td>
@@ -254,7 +259,7 @@
         renderTable();
     }
 
-    // 保存编辑：PATCH input 表（upsert，与 Pair·Sync·Burn 页共用接口），成功后刷新当前页
+    // 保存编辑：PATCH input 表（upsert，与其他 Solidary 页共用接口），成功后刷新当前页
     async function saveEdit(address) {
         const statusRaw = document.getElementById("edit-status").value.trim();
         const input = document.getElementById("edit-input").value;

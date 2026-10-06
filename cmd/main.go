@@ -100,6 +100,8 @@ func main() {
 	r.StaticFile("/solidary-sync-events", "./web/solidary_sync_events.html")
 	// 前端页面：solidary_sync × burn_event_old 交集
 	r.StaticFile("/solidary-burn-cross", "./web/solidary_burn_cross.html")
+	// 前端页面：solidary_sync × pair_created_event 交集
+	r.StaticFile("/solidary-pair-created", "./web/solidary_sync_pair_created.html")
 	// 前端页面：发送事件收集任务到 MQ
 	r.StaticFile("/send-event", "./web/send_event.html")
 	// 前端页面：函数调用监控（watchlist）

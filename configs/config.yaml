@@ -21,6 +21,8 @@ rabbitmq:
 
 web3j:
   timeout: 40s
+  # 本机代理/防火墙拦截 HTTPS 导致 TLS 证书校验失败时置为 true（跳过证书校验）
+  insecure_skip_verify: true
   chains:
     ethereum: https://rpc.ankr.com/eth/235c573e8082e4aa79bfe5ce70371fd6b6b1ecf90e899d1803e1af16fed952c2
     bsc: https://rpc.ankr.com/bsc/235c573e8082e4aa79bfe5ce70371fd6b6b1ecf90e899d1803e1af16fed952c2

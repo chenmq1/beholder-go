@@ -1,11 +1,15 @@
 package config
 
 import (
+	"context"
+	"crypto/tls"
 	"fmt"
 	"log"
+	"net/http"
 	"time"
 
 	"github.com/ethereum/go-ethereum/ethclient"
+	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/jinzhu/gorm"
 	_ "github.com/jinzhu/gorm/dialects/mysql"
 	"github.com/spf13/viper"
@@ -106,14 +110,35 @@ func InitDB() (*gorm.DB, error) {
 }
 
 // InitWeb3j 初始化Web3j客户端
+//
+// web3j.insecure_skip_verify 为 true 时跳过 RPC 端点 TLS 证书校验，
+// 用于本机代理/防火墙拦截 HTTPS 导致 "certificate is not valid for any names" 的环境。
 func InitWeb3j() (map[string]*ethclient.Client, error) {
 	chains := viper.GetStringMapString("web3j.chains")
 	clients := make(map[string]*ethclient.Client)
 
+	// 跳过证书校验：克隆默认传输层（保留代理等设置），仅关闭 TLS 校验
+	var httpClient *http.Client
+	if viper.GetBool("web3j.insecure_skip_verify") {
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+		httpClient = &http.Client{Transport: transport}
+	}
+
 	for chain, url := range chains {
-		client, err := ethclient.Dial(url)
-		if err != nil {
-			return nil, fmt.Errorf("failed to connect to %s: %w", chain, err)
+		var client *ethclient.Client
+		if httpClient != nil {
+			rpcClient, err := rpc.DialOptions(context.Background(), url, rpc.WithHTTPClient(httpClient))
+			if err != nil {
+				return nil, fmt.Errorf("failed to connect to %s: %w", chain, err)
+			}
+			client = ethclient.NewClient(rpcClient)
+		} else {
+			var err error
+			client, err = ethclient.Dial(url)
+			if err != nil {
+				return nil, fmt.Errorf("failed to connect to %s: %w", chain, err)
+			}
 		}
 		clients[chain] = client
 		log.Printf("Web3j client connected for %s", chain)
