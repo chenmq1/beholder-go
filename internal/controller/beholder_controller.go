@@ -928,7 +928,7 @@ func (c *BeholderController) getSolidaryBurnCrossPaged(ctx *gin.Context) {
 // GET /api/solidary-pair-created/paged?chainId=2&page=0&size=100&sortBy=syncRepeatCount
 // Join: solidary_sync_event s INNER JOIN pair_created_event p
 //   ON s.chain_id = p.chain_id AND s.address = p.pair_address
-// 返回两边字段：chainId/address/syncTxHash/syncRepeatCount/token0/token1/factory/createdBlock
+// 返回两边字段：chainId/address/syncTxHash/syncRepeatCount/token0/token1/createdBlock
 // LEFT JOIN input i（键：chain_id + address=pair 地址）带出 status/input，可能为 NULL
 func (c *BeholderController) getSolidaryPairCreatedPaged(ctx *gin.Context) {
 	chainId, _ := strconv.Atoi(ctx.DefaultQuery("chainId", "2"))
@@ -947,7 +947,7 @@ func (c *BeholderController) getSolidaryPairCreatedPaged(ctx *gin.Context) {
 	validSort := map[string]string{
 		"syncRepeatCount": "s.repeat_count DESC",
 		"address":         "s.address ASC",
-		"createdBlock":    "p.block_number ASC",
+		"createdBlock":    "p.block_number DESC",
 	}
 	orderClause, ok := validSort[sortBy]
 	if !ok {
@@ -963,7 +963,6 @@ func (c *BeholderController) getSolidaryPairCreatedPaged(ctx *gin.Context) {
 			s.repeat_count AS sync_repeat_count,
 			p.token0       AS token0,
 			p.token1       AS token1,
-			p.factory      AS factory,
 			p.block_number AS created_block,
 			i.status       AS status,
 			i.input        AS input
@@ -983,7 +982,6 @@ func (c *BeholderController) getSolidaryPairCreatedPaged(ctx *gin.Context) {
 		SyncRepeatCount int     `gorm:"column:sync_repeat_count" json:"syncRepeatCount"`
 		Token0          string  `gorm:"column:token0" json:"token0"`
 		Token1          string  `gorm:"column:token1" json:"token1"`
-		Factory         string  `gorm:"column:factory" json:"factory"`
 		CreatedBlock    uint64  `gorm:"column:created_block" json:"createdBlock"`
 		Status          *int    `gorm:"column:status" json:"status"`
 		Input           *string `gorm:"column:input" json:"input"`

@@ -90,7 +90,7 @@
                 <select id="sortBy">
                     <option value="syncRepeatCount" selected>syncRepeatCount 倒序</option>
                     <option value="address">address 升序</option>
-                    <option value="createdBlock">createdBlock 升序</option>
+                    <option value="createdBlock">createdBlock 倒序</option>
                 </select>
             </div>
             <div class="field">
@@ -114,7 +114,6 @@
                         <th class="group-s" style="text-align:right;">syncRepeatCount</th>
                         <th class="group-p">token0</th>
                         <th class="group-p">token1</th>
-                        <th class="group-p">factory</th>
                         <th class="group-p" style="text-align:right;">createdBlock</th>
                         <th style="text-align:right;">status</th>
                         <th>input</th>
@@ -226,7 +225,6 @@
                 <td class="num group-s">${e.syncRepeatCount}</td>
                 ${addrCell(e.token0, state.chainId)}
                 ${addrCell(e.token1, state.chainId)}
-                ${addrCell(e.factory, state.chainId)}
                 <td class="num group-p">${e.createdBlock}</td>
                 ${editing ? `
                     <td class="num"><input class="cell-edit num-edit" type="number" id="edit-status" value="${status}"></td>

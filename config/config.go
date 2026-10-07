@@ -1,11 +1,14 @@
 package config
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/ethereum/go-ethereum/ethclient"
@@ -113,38 +116,86 @@ func InitDB() (*gorm.DB, error) {
 //
 // web3j.insecure_skip_verify 为 true 时跳过 RPC 端点 TLS 证书校验，
 // 用于本机代理/防火墙拦截 HTTPS 导致 "certificate is not valid for any names" 的环境。
+// 同时对代理/网关偶发返回 HTML 拦截页（"invalid character '<'"）做重试加固。
 func InitWeb3j() (map[string]*ethclient.Client, error) {
 	chains := viper.GetStringMapString("web3j.chains")
 	clients := make(map[string]*ethclient.Client)
 
-	// 跳过证书校验：克隆默认传输层（保留代理等设置），仅关闭 TLS 校验
-	var httpClient *http.Client
+	// 自定义传输层：跳过证书校验（可选）+ 非 JSON 响应重试
+	transport := http.DefaultTransport.(*http.Transport).Clone()
 	if viper.GetBool("web3j.insecure_skip_verify") {
-		transport := http.DefaultTransport.(*http.Transport).Clone()
 		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
-		httpClient = &http.Client{Transport: transport}
+	}
+	httpClient := &http.Client{
+		Transport: &rpcRetryTransport{base: transport},
+		// JSON-RPC 端点不应有重定向；拒绝跟随，避免被代理 302 带到 HTML 页面
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return fmt.Errorf("rpc 端点返回重定向至 %s，已拒绝（疑似代理拦截）", req.URL)
+		},
 	}
 
 	for chain, url := range chains {
-		var client *ethclient.Client
-		if httpClient != nil {
-			rpcClient, err := rpc.DialOptions(context.Background(), url, rpc.WithHTTPClient(httpClient))
-			if err != nil {
-				return nil, fmt.Errorf("failed to connect to %s: %w", chain, err)
-			}
-			client = ethclient.NewClient(rpcClient)
-		} else {
-			var err error
-			client, err = ethclient.Dial(url)
-			if err != nil {
-				return nil, fmt.Errorf("failed to connect to %s: %w", chain, err)
-			}
+		rpcClient, err := rpc.DialOptions(context.Background(), url, rpc.WithHTTPClient(httpClient))
+		if err != nil {
+			return nil, fmt.Errorf("failed to connect to %s: %w", chain, err)
 		}
-		clients[chain] = client
+		clients[chain] = ethclient.NewClient(rpcClient)
 		log.Printf("Web3j client connected for %s", chain)
 	}
 
 	return clients, nil
+}
+
+// rpcRetryTransport 包装底层 Transport：代理/网关偶发返回非 JSON（HTML 拦截页、
+// 502 维护页等）时自动重试，避免上层把 HTML 当 JSON 解析报 "invalid character '<'"。
+type rpcRetryTransport struct {
+	base http.RoundTripper
+}
+
+// 重试间隔：立即、300ms、800ms（共 3 次）
+var rpcRetryDelays = []time.Duration{0, 300 * time.Millisecond, 800 * time.Millisecond}
+
+func (t *rpcRetryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	var lastErr error
+	for attempt, delay := range rpcRetryDelays {
+		if delay > 0 {
+			time.Sleep(delay)
+		}
+
+		// 重试需要可重复读取的请求体（JSON-RPC 请求均由 bytes.Reader 构造，GetBody 可用）
+		if req.GetBody != nil {
+			if body, err := req.GetBody(); err == nil {
+				req.Body = body
+			}
+		}
+
+		resp, err := t.base.RoundTrip(req)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+
+		// 预读开头 256 字节判断是否 JSON-RPC 响应（响应通常很短）
+		peek := make([]byte, 256)
+		n, _ := io.ReadFull(resp.Body, peek)
+		peek = peek[:n]
+		head := bytes.TrimSpace(peek)
+		isJSON := resp.StatusCode == http.StatusOK &&
+			strings.Contains(resp.Header.Get("Content-Type"), "json") &&
+			len(head) > 0 && (head[0] == '{' || head[0] == '[')
+
+		if isJSON {
+			// 回放已读字节，响应体保持完整交给上层
+			resp.Body = io.NopCloser(io.MultiReader(bytes.NewReader(peek), resp.Body))
+			return resp, nil
+		}
+
+		resp.Body.Close()
+		lastErr = fmt.Errorf("rpc 返回非 JSON（status=%d, content-type=%q, 片段=%s）",
+			resp.StatusCode, resp.Header.Get("Content-Type"), string(head))
+		log.Printf("RPC 请求 %s 第 %d 次未拿到 JSON 响应，重试中: %v", req.URL.Host, attempt+1, lastErr)
+	}
+	return nil, lastErr
 }
 
 // InitRabbitMQ 初始化RabbitMQ连接
