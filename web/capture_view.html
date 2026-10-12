@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>扩展捕获 · Trace 视图</title>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+            margin: 0; padding: 24px; background: #f5f7fa; color: #1f2d3d;
+        }
+        h1 { font-size: 20px; margin: 0 0 16px; }
+        .card {
+            background: #fff; border-radius: 8px; padding: 20px;
+            box-shadow: 0 1px 4px rgba(0,0,0,.08); margin-bottom: 20px;
+        }
+        .form-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; }
+        .field { display: flex; flex-direction: column; gap: 4px; }
+        .field.grow { flex: 1; min-width: 320px; }
+        label { font-size: 12px; color: #606266; }
+        input, select {
+            border: 1px solid #dcdfe6; border-radius: 4px; padding: 8px 10px;
+            font-size: 14px; outline: none; background: #fff;
+        }
+        input:focus, select:focus { border-color: #409eff; }
+        button {
+            background: #409eff; color: #fff; border: none; border-radius: 4px;
+            padding: 9px 20px; font-size: 14px; cursor: pointer; height: 36px;
+        }
+        button:hover { background: #66b1ff; }
+        button:disabled { background: #a0cfff; cursor: not-allowed; }
+        .hint { font-size: 12px; color: #909399; margin-top: 4px; }
+        .meta { font-size: 13px; color: #606266; margin-bottom: 12px; line-height: 1.7; }
+        .meta b { color: #1f2d3d; }
+        .meta .kv { display: inline-block; margin-right: 18px; }
+        .status { padding: 24px; text-align: center; color: #909399; font-size: 14px; }
+        .error { color: #f56c6c; }
+        nav.top { background: #1f2d3d; padding: 0 24px; margin: -24px -24px 20px; height: 48px;
+            display: flex; align-items: center; gap: 8px; }
+        nav.top a { color: #c0c4cc; text-decoration: none; padding: 6px 14px; border-radius: 4px;
+            font-size: 14px; }
+        nav.top a:hover { background: rgba(255,255,255,.1); color: #fff; }
+        nav.top a.active { background: #409eff; color: #fff; }
+
+        /* trace 专用 */
+        .trace-view { font-family: ui-monospace, Consolas, "Microsoft YaHei", monospace; font-size: 13px; }
+        .node {
+            border-left: 2px solid #e4e7ed; padding: 8px 10px; margin: 4px 0;
+            background: #fafbfc; border-radius: 0 4px 4px 0;
+        }
+        .node:hover { background: #f0f5ff; }
+        .node.revert-node { border-left-color: #f56c6c; background: #fef0f0; }
+        .node-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+        .depth-badge {
+            display: inline-block; min-width: 44px; text-align: center;
+            background: #e4e7ed; color: #606266; border-radius: 3px;
+            font-size: 11px; padding: 2px 6px;
+        }
+        .tag {
+            display: inline-block; font-size: 11px; font-weight: 600;
+            padding: 2px 7px; border-radius: 3px; letter-spacing: .3px;
+        }
+        .tag-call { background: #ecf5ff; color: #409eff; border: 1px solid #d9ecff; }
+        .tag-store { background: #fdf6ec; color: #e6a23c; border: 1px solid #faecd8; }
+        .tag-other { background: #f4f4f5; color: #909399; border: 1px solid #e9e9eb; }
+        .op { color: #67c23a; font-weight: 600; }
+        .addr { font-family: ui-monospace, Consolas, monospace; font-size: 12px; color: #1f2d3d; }
+        .addr.muted { color: #909399; }
+        .arrow { color: #c0c4cc; }
+        .ext-link { color: #409eff; text-decoration: none; font-size: 11px; margin-left: 6px; }
+        .ext-link:hover { text-decoration: underline; }
+        .sel { color: #9254de; font-size: 12px; }
+        .gas { color: #606266; font-size: 12px; }
+        .revert-badge { background: #f56c6c; color: #fff; font-size: 11px; font-weight: 700;
+            padding: 2px 7px; border-radius: 3px; }
+        .value-tag { color: #e6a23c; font-size: 12px; }
+        details.node-detail { margin-top: 6px; }
+        details.node-detail > summary {
+            cursor: pointer; font-size: 12px; color: #606266; user-select: none;
+            padding: 2px 0;
+        }
+        details.node-detail > summary:hover { color: #409eff; }
+        .args { margin: 6px 0 6px 16px; }
+        .arg { display: grid; grid-template-columns: 140px 90px 1fr; gap: 8px;
+            padding: 3px 0; border-bottom: 1px dashed #ebeef5; font-size: 12px; }
+        .arg:last-child { border-bottom: none; }
+        .arg .arg-name { color: #1f2d3d; }
+        .arg .arg-type { color: #909399; }
+        .arg .arg-val { color: #1f2d3d; word-break: break-all; }
+        pre.raw-body {
+            margin: 0; padding: 12px; background: #1f2d3d; color: #c0c4cc;
+            border-radius: 4px; font-size: 12px; overflow: auto; max-height: 70vh;
+            white-space: pre-wrap; word-break: break-all;
+        }
+        .truncated-warn { color: #e6a23c; font-size: 12px; margin-bottom: 8px; }
+    </style>
+</head>
+<body>
+    <nav class="top" data-active="/capture-view"></nav>
+    <script src="/web/nav.js"></script>
+    <h1>扩展捕获 · Trace 视图</h1>
+
+    <div class="card">
+        <div class="form-row">
+            <div class="field grow">
+                <label>选择 capture（默认最近一条）</label>
+                <select id="capSelect" onchange="loadCapture()"></select>
+            </div>
+            <div class="field">
+                <button id="refreshBtn" onclick="refreshList()">刷新列表</button>
+            </div>
+            <div class="field">
+                <button id="reloadBtn" onclick="loadCapture()">重新渲染</button>
+            </div>
+            <div class="field">
+                <label>链（地址外链用）</label>
+                <select id="chainId" onchange="loadCapture()">
+                    <option value="1">1 · Ethereum</option>
+                    <option value="56">56 · BSC</option>
+                    <option value="137">137 · Polygon</option>
+                    <option value="42161">42161 · Arbitrum</option>
+                    <option value="8453">8453 · Base</option>
+                    <option value="10">10 · Optimism</option>
+                </select>
+            </div>
+        </div>
+        <div class="hint">数据来自浏览器扩展上报（内存环形缓存最近 50 条，不入库）。响应体为 JSON 且含 nodeInfos 时按调用链推导深度缩进展示；否则按原始文本显示。</div>
+    </div>
+
+    <div class="card">
+        <div id="meta" class="meta" style="display:none;"></div>
+        <div id="status" class="status">点击“刷新列表”加载最近 capture</div>
+        <div id="traceView" class="trace-view" style="display:none;"></div>
+    </div>
+
+<script>
+    const API_LIST = "/api/extension/captures";
+
+    // 链配置：dedaub 子路径参照 config/chains.go dedaubChainStrs；scan 域名按链对应
+    const explorerByChain = {
+        1:    "https://etherscan.io",
+        56:   "https://bscscan.com",
+        137:  "https://polygonscan.com",
+        42161: "https://arbiscan.io",
+        8453: "https://basescan.org",
+        10:   "https://optimistic.etherscan.io"
+    };
+    const dedaubByChain = {
+        1: "ethereum", 56: "binance", 137: "polygon",
+        42161: "arbitrum", 8453: "base", 10: "optimism"
+    };
+    function currentChainId() { return Number(document.getElementById("chainId").value) || 1; }
+
+    // addrLinks 在地址后挂 scan + dedaub 两个外链（地址格式 0x+40hex 才处理）
+    function addrLinks(addr) {
+        if (!addr || !/^0x[0-9a-fA-F]{40}$/.test(addr)) return esc(addr);
+        const cid = currentChainId();
+        const exp = explorerByChain[cid] || explorerByChain[1];
+        const dd = dedaubByChain[cid] || "ethereum";
+        const expHref = `${exp}/address/${addr}#code`;
+        const dedHref = `https://app.dedaub.com/${dd}/address/${addr}/decompiled`;
+        return `${esc(addr)} <a class="ext-link" href="${expHref}" target="_blank" rel="noopener noreferrer" title="${expHref}">scan</a><a class="ext-link" href="${dedHref}" target="_blank" rel="noopener noreferrer" title="${dedHref}">de</a>`;
+    }
+
+    function shortAddr(addr) {
+        if (!addr) return "";
+        if (addr.length <= 14) return addr;
+        return addr.slice(0, 8) + "..." + addr.slice(-6);
+    }
+    function shortHex(h) {
+        if (!h) return "";
+        if (h.length <= 16) return h;
+        return h.slice(0, 10) + "..." + h.slice(-6);
+    }
+    function esc(s) {
+        if (s === null || s === undefined) return "";
+        return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
+    // fmtVal 格式化参数值：纯大整数加千分位，其余原样
+    function fmtVal(v) {
+        if (v === null || v === undefined) return "";
+        const s = String(v);
+        if (/^-?\d+$/.test(s) && s.length > 3) {
+            try { return BigInt(s).toLocaleString("en-US"); } catch (e) { return s; }
+        }
+        return s;
+    }
+
+    // renderSig 把 decoded 渲染成 funcName(name=val, name=val)
+    function renderSig(decoded) {
+        const sig = decoded.signature || "";
+        const name = decoded.name || (sig ? sig.replace(/\(.*$/, "") : "");
+        const args = Array.isArray(decoded.argsIn) ? decoded.argsIn
+                   : Array.isArray(decoded.args) ? decoded.args : [];
+        if (!args.length) return esc(sig || name);
+        const parts = args.map(a => {
+            const an = a.name || a.type || "";
+            return `${esc(an)}=${esc(fmtVal(a.value))}`;
+        });
+        return `${esc(name)}(${parts.join(", ")})`;
+    }
+
+    // decodeBody 处理 base64 编码响应体，返回明文
+    function decodeBody(body, enc) {
+        if (!body) return "";
+        if (enc === "base64") {
+            try { return atob(body); } catch (e) { return body; }
+        }
+        return body;
+    }
+
+    // tryParseTrace 尝试解析为含 nodeInfos 的 trace JSON
+    function tryParseTrace(text) {
+        if (!text) return null;
+        let obj;
+        try { obj = JSON.parse(text); } catch (e) { return null; }
+        if (!obj || !Array.isArray(obj.nodeInfos) || obj.nodeInfos.length === 0) return null;
+        return obj;
+    }
+
+    // 推导调用链深度：caller→callee 地址匹配，caller="" 为根 depth0
+    function deriveDepths(nodes) {
+        const calleeDepth = new Map(); // callee地址 -> depth
+        const out = [];
+        let lastDepth = 0;
+        nodes.forEach((n, i) => {
+            const nd = n.nodeData || {};
+            const caller = nd.caller || "";
+            const callee = nd.callee || "";
+            const contract = nd.contract || "";
+            let depth;
+            if (caller === "" && callee) {
+                depth = 0;
+            } else if (caller && calleeDepth.has(caller)) {
+                depth = calleeDepth.get(caller) + 1;
+            } else if (contract && calleeDepth.has(contract)) {
+                // 存储节点：读写发生在该合约执行上下文内，用其 depth
+                depth = calleeDepth.get(contract);
+            } else {
+                depth = lastDepth;
+            }
+            if (callee) calleeDepth.set(callee, depth);
+            lastDepth = depth;
+            out.push({ node: n, nd, depth, index: i });
+        });
+        return out;
+    }
+
+    function argRow(a) {
+        if (!a) return "";
+        const name = a.name || "";
+        const type = a.type || "";
+        const val = a.value;
+        let valHtml;
+        if (val === null || val === undefined) {
+            valHtml = '<span class="arg-val muted">—</span>';
+        } else if (typeof val === "string" && val.length > 80) {
+            // 长值（如 calldata bytes）折叠
+            valHtml = `<details><summary class="arg-val" style="color:#409eff;cursor:pointer;">${esc(val.slice(0, 78))}… (${val.length} chars)</summary><pre class="arg-val" style="margin:4px 0 0 0;white-space:pre-wrap;word-break:break-all;">${esc(val)}</pre></details>`;
+        } else if (typeof val === "string" && /^0x[0-9a-fA-F]{40}$/.test(val)) {
+            valHtml = `<span class="arg-val">${addrLinks(val)}</span>`;
+        } else {
+            valHtml = `<span class="arg-val">${esc(val)}</span>`;
+        }
+        return `<div class="arg"><span class="arg-name">${esc(name)}</span><span class="arg-type">${esc(type)}</span>${valHtml}</div>`;
+    }
+
+    function renderArgsList(args, title) {
+        if (!args || !args.length) return "";
+        return `<div class="args"><div style="font-size:11px;color:#909399;margin-bottom:2px;">${title}</div>${args.map(argRow).join("")}</div>`;
+    }
+
+    function renderNode(item) {
+        const { node, nd, depth, index } = item;
+        const indent = depth * 22;
+        const op = nd.operation || "";
+        const callee = nd.callee || nd.contract || "";
+        const selector = nd.selector || "";
+        const decoded = nd.decoded || {};
+        const sig = decoded.signature || decoded.name || "";
+        const sigText = sig ? renderSig(decoded) : "";
+        const gas = (nd.gasUsed !== undefined && nd.gasUsed !== null) ? Number(nd.gasUsed).toLocaleString() + " gas" : "";
+        const value = nd.value || "";
+        const revert = nd.revert === true;
+        const revertMsg = nd.revertMsg || "";
+
+        const slotVal = nd.value && node.nodeType === 3 ? nd.value : "";
+
+        // 摘要行：op → 地址(完整) → selector → value → gas → REVERT
+        let summary = `<div class="node-summary">`;
+        if (op) summary += `<span class="op">${esc(op)}</span>`;
+        if (callee) summary += `<span class="addr">${addrLinks(callee)}</span>`;
+        if (sigText) summary += `<span style="color:#9254de;font-weight:600;" title="selector ${esc(selector)}">${sigText}</span>`;
+        else if (selector) summary += `<span class="sel" title="selector">${esc(selector)}</span>`;
+        if (value && node.nodeType !== 3) summary += `<span class="value-tag" title="msg.value">${esc(value)}</span>`;
+        if (gas) summary += `<span class="gas">${gas}</span>`;
+        if (revert) summary += `<span class="revert-badge" title="${esc(revertMsg)}">REVERT</span>`;
+        summary += `</div>`;
+
+        // 详情（decoded 参数 / output / calldata / 存储值）
+        let detailHtml = "";
+        const argsIn = renderArgsList(decoded.argsIn || decoded.args, decoded.args ? "args" : "argsIn");
+        const argsOut = renderArgsList(decoded.argsOut, "argsOut");
+        const hasDetail = argsIn || argsOut || nd.calldata || nd.output || (node.nodeType === 3 && slotVal) || revertMsg;
+        if (hasDetail) {
+            let inner = "";
+            if (argsIn) inner += argsIn;
+            if (argsOut) inner += argsOut;
+            if (nd.calldata) inner += `<div class="arg"><span class="arg-name">calldata</span><span class="arg-type">bytes</span><details><summary class="arg-val" style="color:#409eff;cursor:pointer;">${esc(shortHex(nd.calldata))} (${nd.calldata.length} chars)</summary><pre class="arg-val" style="margin:4px 0 0 0;white-space:pre-wrap;word-break:break-all;">${esc(nd.calldata)}</pre></details></div>`;
+            if (nd.output) inner += `<div class="arg"><span class="arg-name">output</span><span class="arg-type">bytes</span><details><summary class="arg-val" style="color:#409eff;cursor:pointer;">${esc(shortHex(nd.output))} (${nd.output.length} chars)</summary><pre class="arg-val" style="margin:4px 0 0 0;white-space:pre-wrap;word-break:break-all;">${esc(nd.output)}</pre></details></div>`;
+            if (node.nodeType === 3 && slotVal) inner += `<div class="arg"><span class="arg-name">value</span><span class="arg-type">bytes32</span><span class="arg-val">${esc(slotVal)}</span></div>`;
+            if (revertMsg) inner += `<div class="arg"><span class="arg-name">revertMsg</span><span class="arg-type">string</span><span class="arg-val" style="color:#f56c6c;">${esc(revertMsg)}</span></div>`;
+            detailHtml = `<details class="node-detail"><summary>展开详情（decoded / calldata / output）</summary>${inner}</details>`;
+        }
+
+        const cls = revert ? "node revert-node" : "node";
+        return `<div class="${cls}" style="margin-left:${indent}px;">${summary}${detailHtml}</div>`;
+    }
+
+    function renderTrace(text) {
+        const trace = tryParseTrace(text);
+        if (!trace) {
+            // 非 trace JSON：原始文本
+            return `<pre class="raw-body">${esc(text)}</pre>`;
+        }
+        // 忽略 nodeType=3（存储读写）和 nodeType=4 的节点，不参与渲染与深度推导
+        const visible = trace.nodeInfos.filter(n => n.nodeType !== 3 && n.nodeType !== 4);
+        const items = deriveDepths(visible);
+        const head = `<div class="hint" style="margin-bottom:8px;">trace · 共 <b>${items.length}</b> 个节点（已忽略 nodeType 3/4）· 按 caller→callee 地址链推导深度缩进</div>`;
+        return head + items.map(renderNode).join("");
+    }
+
+    function renderMeta(c) {
+        const parts = [];
+        parts.push(`<span class="kv"><b>#${c.id}</b></span>`);
+        parts.push(`<span class="kv">src <b>${esc(c.source || "")}</b></span>`);
+        parts.push(`<span class="kv">${esc(c.method || "")} <b>${esc(c.url || "")}</b></span>`);
+        parts.push(`<span class="kv">status <b>${c.status}</b></span>`);
+        if (c.mimeType) parts.push(`<span class="kv">mime <b>${esc(c.mimeType)}</b></span>`);
+        if (c.pageUrl) parts.push(`<span class="kv">page <b>${esc(c.pageUrl)}</b></span>`);
+        if (c.capturedAt) parts.push(`<span class="kv">captured <b>${esc(c.capturedAt)}</b></span>`);
+        if (c.receivedAt) parts.push(`<span class="kv">received <b>${esc(c.receivedAt)}</b></span>`);
+        if (c.truncated) parts.push(`<span class="kv" style="color:#e6a23c;">已截断</span>`);
+        if (c.responseEnc) parts.push(`<span class="kv">enc <b>${esc(c.responseEnc)}</b></span>`);
+        return parts.join("");
+    }
+
+    async function refreshList() {
+        const sel = document.getElementById("capSelect");
+        const btn = document.getElementById("refreshBtn");
+        const statusEl = document.getElementById("status");
+        const metaEl = document.getElementById("meta");
+        const traceEl = document.getElementById("traceView");
+        btn.disabled = true;
+        statusEl.className = "status";
+        statusEl.textContent = "加载 capture 列表中...";
+        statusEl.style.display = "block";
+        metaEl.style.display = "none";
+        traceEl.style.display = "none";
+        try {
+            const resp = await fetch(API_LIST);
+            const data = await resp.json();
+            if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+            const list = data.captures || [];
+            if (!list.length) {
+                sel.innerHTML = "";
+                statusEl.textContent = "暂无 capture 数据（扩展尚未上报任何捕获）";
+                return;
+            }
+            // 列表按 id 升序返回，最新在最后；下拉按最新优先展示
+            const ordered = list.slice().reverse();
+            sel.innerHTML = ordered.map(c => {
+                const label = `#${c.id} · ${c.method || "?"} ${shortUrl(c.url)} · ${c.status}`;
+                return `<option value="${c.id}">${esc(label)}</option>`;
+            }).join("");
+            // 默认选最新（ordered[0] 即最大 id）
+            sel.value = ordered[0].id;
+            await loadCapture();
+        } catch (err) {
+            statusEl.className = "status error";
+            statusEl.textContent = "加载列表失败：" + err.message;
+        } finally {
+            btn.disabled = false;
+        }
+    }
+
+    function shortUrl(u) {
+        if (!u) return "";
+        try {
+            const url = new URL(u);
+            return url.pathname + (url.search ? url.search.slice(0, 20) : "");
+        } catch (e) {
+            return u.length > 50 ? u.slice(0, 50) + "…" : u;
+        }
+    }
+
+    async function loadCapture() {
+        const sel = document.getElementById("capSelect");
+        const id = sel.value;
+        if (!id) return;
+        const statusEl = document.getElementById("status");
+        const metaEl = document.getElementById("meta");
+        const traceEl = document.getElementById("traceView");
+        const btn = document.getElementById("reloadBtn");
+        btn.disabled = true;
+        statusEl.className = "status";
+        statusEl.textContent = "加载 capture 详情中...";
+        statusEl.style.display = "block";
+        metaEl.style.display = "none";
+        traceEl.style.display = "none";
+        try {
+            const resp = await fetch(`${API_LIST}?id=${encodeURIComponent(id)}`);
+            const data = await resp.json();
+            if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+            const caps = data.captures || [];
+            const c = caps[0];
+            if (!c) {
+                statusEl.textContent = "未找到该 capture";
+                return;
+            }
+            metaEl.innerHTML = renderMeta(c);
+            metaEl.style.display = "block";
+            const body = decodeBody(c.responseBody, c.responseEnc);
+            if (!body) {
+                statusEl.textContent = "该 capture 响应体为空";
+                return;
+            }
+            let html = "";
+            if (c.truncated) {
+                html += `<div class="truncated-warn">⚠ 响应体被扩展截断，可能无法完整解析</div>`;
+            }
+            html += renderTrace(body);
+            traceEl.innerHTML = html;
+            traceEl.style.display = "block";
+            statusEl.style.display = "none";
+        } catch (err) {
+            statusEl.className = "status error";
+            statusEl.textContent = "加载失败：" + err.message;
+        } finally {
+            btn.disabled = false;
+        }
+    }
+
+    // 首次自动加载
+    refreshList();
+</script>
+</body>
+</html>

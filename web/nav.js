@@ -15,6 +15,7 @@ const NAV_ITEMS = [
     { href: "/solidary-pair-created", label: "Sync × PairCreated" },
     { href: "/send-event",           label: "发送任务" },
     { href: "/watchlist",            label: "函数监控" },
+    { href: "/capture-view",         label: "扩展捕获" },
 ];
 
 function renderNav(navEl) {

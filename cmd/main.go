@@ -106,6 +106,8 @@ func main() {
 	r.StaticFile("/send-event", "./web/send_event.html")
 	// 前端页面：函数调用监控（watchlist）
 	r.StaticFile("/watchlist", "./web/watchlist.html")
+	// 前端页面：浏览器扩展捕获查看（trace 调用链深度缩进）
+	r.StaticFile("/capture-view", "./web/capture_view.html")
 	// 前端共享资源：全局顶部菜单脚本（各页面用 <nav data-active> + <script src="/web/nav.js">）
 	r.StaticFile("/web/nav.js", "./web/nav.js")
 
