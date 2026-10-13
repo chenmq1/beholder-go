@@ -19,22 +19,37 @@ async function init() {
   chrome.debugger.onEvent.addListener(onDebuggerEvent);
   chrome.debugger.onDetach.addListener(onDebuggerDetach);
 
-  if (settings.bgEnabled) {
-    const tabs = await chrome.tabs.query({ url: ['http://*/*', 'https://*/*'] });
-    for (const tab of tabs) await attachTab(tab.id, tab.url);
-  }
+  // 启动即对账：附加 pageScope 内的标签页；分离范围外的孤儿会话（上次 SW 遗留）
+  await reconcile();
 }
 
 // ---------- 设置变化 ----------
 
 async function onSettingsChanged(_changes, _area) {
-  const prevEnabled = settings.bgEnabled;
   settings = await loadSettings();
-  if (prevEnabled && !settings.bgEnabled) {
-    await detachAll();
-  } else if (!prevEnabled && settings.bgEnabled) {
-    const tabs = await chrome.tabs.query({ url: ['http://*/*', 'https://*/*'] });
-    for (const tab of tabs) await attachTab(tab.id, tab.url);
+  await reconcile();
+}
+
+// 统一对账：先清掉所有 http/https 标签页的遗留会话（含上次 SW 孤儿），再按 bgEnabled+pageScope 重新附加
+async function reconcile() {
+  const tabs = await chrome.tabs.query({ url: ['http://*/*', 'https://*/*'] });
+  console.log('[beholder] reconcile: pageScope=%s bgEnabled=%s tabs=%d',
+    JSON.stringify(settings.pageScope), settings.bgEnabled, tabs.length);
+  const want = (tab) => settings.bgEnabled && matchesPageScope(settings.pageScope, tab.url);
+  for (const tab of tabs) {
+    const tabId = tab.id;
+    const w = want(tab);
+    // 1. 先分离任何遗留会话——未附加则忽略错误
+    try { await chrome.debugger.detach({ tabId }); } catch (e) { /* 未附加 */ }
+    attached.delete(tabId);
+    setBadge(tabId, '', '#666666');
+    // 2. 按当前范围重新附加
+    if (w) {
+      const ok = await attachTab(tabId, tab.url);
+      console.log('[beholder] tab %d %s want=%s attach=%s', tabId, tab.url, w, ok ? 'ON' : 'ERR');
+    } else {
+      console.log('[beholder] tab %d %s want=false skip', tabId, tab.url);
+    }
   }
 }
 
@@ -44,11 +59,17 @@ async function onTabUpdated(tabId, info, tab) {
   if (!settings || !settings.bgEnabled) return;
   const url = info.url || tab.url || '';
   if (!/^https?:/i.test(url)) return;
+  const inScope = matchesPageScope(settings.pageScope, url);
+  console.log('[beholder] onTabUpdated tab=%d url=%s inScope=%s', tabId, url, inScope);
   if (attached.has(tabId)) {
-    attached.get(tabId).url = url; // 跟踪页面导航
+    if (inScope) {
+      attached.get(tabId).url = url; // 跟踪页面导航
+    } else {
+      await detachOne(tabId); // 导航离开 pageScope → 分离
+    }
     return;
   }
-  await attachTab(tabId, url);
+  if (inScope) await attachTab(tabId, url);
 }
 
 function onTabRemoved(tabId) {
@@ -59,24 +80,36 @@ async function attachTab(tabId, url) {
   if (attached.has(tabId)) return true;
   try {
     await chrome.debugger.attach({ tabId }, '1.3');
-    await chrome.debugger.sendCommand({ tabId }, 'Network.enable', { maxPostDataSize: 65536 });
-    attached.set(tabId, { url: url || '', requests: new Map() });
-    setBadge(tabId, 'ON', '#0e639c');
-    return true;
   } catch (e) {
-    // 常见原因：DevTools 已打开（Another debugger is already attached）、chrome:// 页面等
-    setBadge(tabId, 'ERR', '#a1260d');
-    console.warn(`[beholder-ext] attach tab ${tabId} failed:`, e && e.message);
-    return false;
+    // 可能是上次 SW 遗留的孤儿会话仍占用：先分离再重试一次
+    try { await chrome.debugger.detach({ tabId }); } catch (e2) { /* 未附加 */ }
+    try {
+      await chrome.debugger.attach({ tabId }, '1.3');
+    } catch (e2) {
+      // 真正失败（常见：DevTools 已打开该标签页，二者互斥）
+      setBadge(tabId, 'ERR', '#a1260d');
+      console.warn(`[beholder-ext] attach tab ${tabId} failed:`, e2 && e2.message);
+      return false;
+    }
   }
+  await chrome.debugger.sendCommand({ tabId }, 'Network.enable', { maxPostDataSize: 65536 });
+  attached.set(tabId, { url: url || '', requests: new Map() });
+  setBadge(tabId, 'ON', '#0e639c');
+  return true;
 }
 
 async function detachAll() {
   for (const tabId of Array.from(attached.keys())) {
-    try { await chrome.debugger.detach({ tabId }); } catch (e) { /* 已分离则忽略 */ }
-    setBadge(tabId, '', '#666666'); // 显式 detach 不触发 onDetach，需自行清理徽标
+    await detachOne(tabId);
   }
   attached.clear();
+}
+
+// 分离单个标签页（显式 detach 不触发 onDetach，需自行清理徽标）
+async function detachOne(tabId) {
+  try { await chrome.debugger.detach({ tabId }); } catch (e) { /* 已分离则忽略 */ }
+  attached.delete(tabId);
+  setBadge(tabId, '', '#666666');
 }
 
 async function onDebuggerDetach(source) {

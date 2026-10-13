@@ -6,10 +6,14 @@ init();
 async function init() {
   settings = await loadSettings();
   document.getElementById('backendUrl').value = settings.backendUrl;
+  document.getElementById('pageScope').value = settings.pageScope || '';
   document.getElementById('bgEnabled').checked = !!settings.bgEnabled;
   document.getElementById('autoSend').checked = !!settings.autoSend;
 
   document.getElementById('saveBackend').addEventListener('click', saveBackend);
+  document.getElementById('saveScope').addEventListener('click', saveScope);
+  document.getElementById('pageScope').addEventListener('change', saveScope); // 失焦自动保存，防漏存
+  document.getElementById('backendUrl').addEventListener('change', saveBackend);
   document.getElementById('testConn').addEventListener('click', testConn);
   document.getElementById('bgEnabled').addEventListener('change', async (e) => {
     settings.bgEnabled = e.target.checked;
@@ -31,6 +35,16 @@ async function saveBackend() {
   if (!/^https?:\/\//.test(v)) { flash('地址需以 http:// 或 https:// 开头', true); return; }
   settings.backendUrl = v;
   await saveSettings({ backendUrl: v });
+  flash('已保存');
+}
+
+async function saveScope() {
+  const v = document.getElementById('pageScope').value.trim();
+  if (v) {
+    try { new RegExp(v); } catch (e) { flash('正则无效：' + e.message, true); return; }
+  }
+  settings.pageScope = v;
+  await saveSettings({ pageScope: v }); // background.js 监听 storage.onChanged 自动对账附加状态
   flash('已保存');
 }
 

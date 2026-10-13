@@ -39,6 +39,15 @@
   </section>
 
   <section>
+    <label>页面范围（仅附加 debugger 到 URL 命中此正则的标签页；留空 = 所有网页）</label>
+    <div class="row">
+      <input type="text" id="pageScope" placeholder="如 ^https://app\.blocksec\.com/phalcon/explorer/tx/">
+      <button id="saveScope">保存</button>
+    </div>
+    <div class="hint">只有访问匹配页面时才显示调试横幅并监控；访问其他网站不附加、无横幅。</div>
+  </section>
+
+  <section>
     <div class="switch">
       <input type="checkbox" id="bgEnabled">
       <label for="bgEnabled" style="margin:0">后台自动捕获（附加所有网页标签页，页面顶部会出现调试横幅）</label>

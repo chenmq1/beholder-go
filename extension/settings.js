@@ -4,10 +4,12 @@
 const DEFAULT_SETTINGS = {
   // 后端基地址（POST {backendUrl}/api/extension/capture）
   backendUrl: 'http://127.0.0.1:8090',
-  // 后台自动捕获总开关（chrome.debugger 附加所有 http/https 标签页）
+  // 后台自动捕获总开关（chrome.debugger 附加匹配 pageScope 的标签页）
   bgEnabled: false,
   // DevTools 面板内“匹配规则自动发送”开关
   autoSend: false,
+  // 页面范围正则：仅当标签页 URL 命中时才附加 debugger（空 = 不限制，附加所有 http/https 页）
+  pageScope: '',
   // 匹配规则：{ pattern: URL 正则, bodyPattern: 响应体正则(可选), method: 精确匹配(可选), enabled: bool }
   rules: []
 };
@@ -41,6 +43,12 @@ function matchBodyPattern(rule, body) {
 
 function matchAnyRule(rules, url, method) {
   return (rules || []).find(r => matchRule(r, url, method)) || null;
+}
+
+// 页面范围判断：pageScope 为空=不限；否则 tab URL 命中正则才附加 debugger
+function matchesPageScope(pageScope, url) {
+  if (!pageScope) return true;
+  try { return new RegExp(pageScope).test(url || ''); } catch (e) { return false; }
 }
 
 // 上报到后端。返回 {ok, error}
