@@ -11,6 +11,7 @@
     input[type=text] { width: 100%; padding: 4px 6px; background: #2a2a2a; color: #ddd; border: 1px solid #3c3c3c; border-radius: 3px; }
     .row { display: flex; gap: 6px; align-items: center; margin: 2px 0; }
     .row input.rule-pattern { flex: 2; }
+    .row input.scope-pattern { flex: 1; }
     .row input.rule-method { flex: 0 0 64px; }
     .row input.rule-body { flex: 2; }
     button { background: #0e639c; color: #fff; border: none; padding: 4px 10px; cursor: pointer; border-radius: 3px; font-size: 12px; }
@@ -39,10 +40,10 @@
   </section>
 
   <section>
-    <label>页面范围（仅附加 debugger 到 URL 命中此正则的标签页；留空 = 所有网页）</label>
-    <div class="row">
-      <input type="text" id="pageScope" placeholder="如 ^https://app\.blocksec\.com/phalcon/explorer/tx/">
-      <button id="saveScope">保存</button>
+    <label>页面范围（仅附加 debugger 到 URL 命中以下任一正则的标签页；全部留空 = 所有网页）</label>
+    <div id="scopes"></div>
+    <div class="row" style="margin-top:6px">
+      <button id="addScope" class="small">+ 添加页面范围</button>
     </div>
     <div class="hint">只有访问匹配页面时才显示调试横幅并监控；访问其他网站不附加、无横幅。</div>
   </section>

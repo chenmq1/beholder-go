@@ -6,13 +6,10 @@ init();
 async function init() {
   settings = await loadSettings();
   document.getElementById('backendUrl').value = settings.backendUrl;
-  document.getElementById('pageScope').value = settings.pageScope || '';
   document.getElementById('bgEnabled').checked = !!settings.bgEnabled;
   document.getElementById('autoSend').checked = !!settings.autoSend;
 
   document.getElementById('saveBackend').addEventListener('click', saveBackend);
-  document.getElementById('saveScope').addEventListener('click', saveScope);
-  document.getElementById('pageScope').addEventListener('change', saveScope); // 失焦自动保存，防漏存
   document.getElementById('backendUrl').addEventListener('change', saveBackend);
   document.getElementById('testConn').addEventListener('click', testConn);
   document.getElementById('bgEnabled').addEventListener('change', async (e) => {
@@ -23,10 +20,15 @@ async function init() {
     settings.autoSend = e.target.checked;
     await saveSettings({ autoSend: settings.autoSend });
   });
+  document.getElementById('addScope').addEventListener('click', () => {
+    settings.pageScopes.push('');
+    renderScopes();
+  });
   document.getElementById('addRule').addEventListener('click', () => {
     settings.rules.push({ pattern: '', bodyPattern: '', method: '', enabled: true });
     renderRules();
   });
+  renderScopes();
   renderRules();
 }
 
@@ -38,14 +40,42 @@ async function saveBackend() {
   flash('已保存');
 }
 
-async function saveScope() {
-  const v = document.getElementById('pageScope').value.trim();
-  if (v) {
-    try { new RegExp(v); } catch (e) { flash('正则无效：' + e.message, true); return; }
+function renderScopes() {
+  const box = document.getElementById('scopes');
+  box.innerHTML = '';
+  if (!settings.pageScopes.length) {
+    box.innerHTML = '<div class="empty">未配置 = 所有网页（谨慎）</div>';
+    return;
   }
-  settings.pageScope = v;
-  await saveSettings({ pageScope: v }); // background.js 监听 storage.onChanged 自动对账附加状态
-  flash('已保存');
+  settings.pageScopes.forEach((scope, i) => {
+    const row = document.createElement('div');
+    row.className = 'row';
+    row.innerHTML = `
+      <input type="text" class="scope-pattern" placeholder="如 ^https://app\\.blocksec\\.com/phalcon/explorer/tx/" value="${htmlEscape(scope)}">
+      <button class="del small">删</button>`;
+    row.querySelector('.scope-pattern').addEventListener('change', async (e) => {
+      const v = e.target.value.trim();
+      if (v) {
+        try { new RegExp(v); } catch (err) { flash('正则无效：' + err.message, true); return; }
+      }
+      settings.pageScopes[i] = v;
+      const before = settings.pageScopes.length;
+      await persistScopes();
+      if (settings.pageScopes.length !== before) renderScopes();
+    });
+    row.querySelector('.del').addEventListener('click', async () => {
+      settings.pageScopes.splice(i, 1);
+      renderScopes();
+      await persistScopes();
+    });
+    box.appendChild(row);
+  });
+}
+
+async function persistScopes() {
+  // 去掉空白项；空列表 = 不限制
+  settings.pageScopes = settings.pageScopes.filter(s => s && s.trim());
+  await saveSettings({ pageScopes: settings.pageScopes });
 }
 
 async function testConn() {

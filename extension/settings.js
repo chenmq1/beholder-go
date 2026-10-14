@@ -8,8 +8,8 @@ const DEFAULT_SETTINGS = {
   bgEnabled: false,
   // DevTools 面板内“匹配规则自动发送”开关
   autoSend: false,
-  // 页面范围正则：仅当标签页 URL 命中时才附加 debugger（空 = 不限制，附加所有 http/https 页）
-  pageScope: '',
+  // 页面范围正则列表：仅当标签页 URL 命中其中任一时才附加 debugger（空列表 = 不限制，附加所有 http/https 页）
+  pageScopes: [],
   // 匹配规则：{ pattern: URL 正则, bodyPattern: 响应体正则(可选), method: 精确匹配(可选), enabled: bool }
   rules: []
 };
@@ -17,8 +17,15 @@ const DEFAULT_SETTINGS = {
 const MAX_BODY_LEN = 2 * 1024 * 1024; // 单个请求/响应体上限 2MB，超出截断
 
 async function loadSettings() {
-  const stored = await chrome.storage.sync.get(DEFAULT_SETTINGS);
-  return Object.assign({}, DEFAULT_SETTINGS, stored);
+  // pageScope 是旧版字段，已迁移为 pageScopes；显式取出以便迁移
+  const stored = await chrome.storage.sync.get(Object.assign({ pageScope: '' }, DEFAULT_SETTINGS));
+  const merged = Object.assign({}, DEFAULT_SETTINGS, stored);
+  // 旧版本 pageScope 为单个字符串，迁移到 pageScopes 数组并清除旧键
+  if (stored.pageScope && typeof stored.pageScope === 'string' && stored.pageScope.trim()) {
+    merged.pageScopes = [stored.pageScope.trim()];
+    chrome.storage.sync.remove('pageScope');
+  }
+  return merged;
 }
 
 function saveSettings(patch) {
@@ -45,10 +52,12 @@ function matchAnyRule(rules, url, method) {
   return (rules || []).find(r => matchRule(r, url, method)) || null;
 }
 
-// 页面范围判断：pageScope 为空=不限；否则 tab URL 命中正则才附加 debugger
-function matchesPageScope(pageScope, url) {
-  if (!pageScope) return true;
-  try { return new RegExp(pageScope).test(url || ''); } catch (e) { return false; }
+// 页面范围判断：pageScopes 为空=不限；否则 tab URL 命中任一正则才附加 debugger
+function matchesPageScope(pageScopes, url) {
+  if (!pageScopes || !pageScopes.length) return true;
+  return pageScopes.some(re => {
+    try { return new RegExp(re).test(url || ''); } catch (e) { return false; }
+  });
 }
 
 // 上报到后端。返回 {ok, error}

@@ -68,6 +68,9 @@
         .addr { font-family: ui-monospace, Consolas, monospace; font-size: 12px; color: #1f2d3d; }
         .addr.muted { color: #909399; }
         .arrow { color: #c0c4cc; }
+        .addr-label { font-family: inherit; font-weight: 500; color: #1f2d3d; }
+        .addr-label.labeled { background: #e8f4ff; border: 1px solid #b3d8ff; border-radius: 3px;
+            padding: 1px 5px; font-weight: 700; color: #1d6fdb; }
         .ext-link { color: #409eff; text-decoration: none; font-size: 11px; margin-left: 6px; }
         .ext-link:hover { text-decoration: underline; }
         .sel { color: #9254de; font-size: 12px; }
@@ -153,14 +156,20 @@
     function currentChainId() { return Number(document.getElementById("chainId").value) || 1; }
 
     // addrLinks 在地址后挂 scan + dedaub 两个外链（地址格式 0x+40hex 才处理）
-    function addrLinks(addr) {
+    // 有 label 时显示 label（hover 显示地址），链接仍用原地址
+    function addrLinks(addr, labelMap) {
+        labelMap = labelMap || new Map();
         if (!addr || !/^0x[0-9a-fA-F]{40}$/.test(addr)) return esc(addr);
         const cid = currentChainId();
         const exp = explorerByChain[cid] || explorerByChain[1];
         const dd = dedaubByChain[cid] || "ethereum";
         const expHref = `${exp}/address/${addr}#code`;
         const dedHref = `https://app.dedaub.com/${dd}/address/${addr}/decompiled`;
-        return `${esc(addr)} <a class="ext-link" href="${expHref}" target="_blank" rel="noopener noreferrer" title="${expHref}">scan</a><a class="ext-link" href="${dedHref}" target="_blank" rel="noopener noreferrer" title="${dedHref}">de</a>`;
+        const label = labelMap.get(String(addr).toLowerCase()) || "";
+        const display = label ? esc(label) : esc(addr);
+        const title = label ? ` title="${esc(addr)}"` : "";
+        const cls = label ? "addr-label labeled" : "addr-label";
+        return `<span class="${cls}"${title}>${display}</span> <a class="ext-link" href="${expHref}" target="_blank" rel="noopener noreferrer" title="${expHref}">scan</a><a class="ext-link" href="${dedHref}" target="_blank" rel="noopener noreferrer" title="${dedHref}">de</a>`;
     }
 
     function shortAddr(addr) {
@@ -248,7 +257,7 @@
         return out;
     }
 
-    function argRow(a) {
+    function argRow(a, labelMap) {
         if (!a) return "";
         const name = a.name || "";
         const type = a.type || "";
@@ -260,19 +269,19 @@
             // 长值（如 calldata bytes）折叠
             valHtml = `<details><summary class="arg-val" style="color:#409eff;cursor:pointer;">${esc(val.slice(0, 78))}… (${val.length} chars)</summary><pre class="arg-val" style="margin:4px 0 0 0;white-space:pre-wrap;word-break:break-all;">${esc(val)}</pre></details>`;
         } else if (typeof val === "string" && /^0x[0-9a-fA-F]{40}$/.test(val)) {
-            valHtml = `<span class="arg-val">${addrLinks(val)}</span>`;
+            valHtml = `<span class="arg-val">${addrLinks(val, labelMap)}</span>`;
         } else {
             valHtml = `<span class="arg-val">${esc(val)}</span>`;
         }
         return `<div class="arg"><span class="arg-name">${esc(name)}</span><span class="arg-type">${esc(type)}</span>${valHtml}</div>`;
     }
 
-    function renderArgsList(args, title) {
+    function renderArgsList(args, title, labelMap) {
         if (!args || !args.length) return "";
-        return `<div class="args"><div style="font-size:11px;color:#909399;margin-bottom:2px;">${title}</div>${args.map(argRow).join("")}</div>`;
+        return `<div class="args"><div style="font-size:11px;color:#909399;margin-bottom:2px;">${title}</div>${args.map(a => argRow(a, labelMap)).join("")}</div>`;
     }
 
-    function renderNode(item) {
+    function renderNode(item, labelMap) {
         const { node, nd, depth, index } = item;
         const indent = depth * 22;
         const op = nd.operation || "";
@@ -291,7 +300,7 @@
         // 摘要行：op → 地址(完整) → selector → value → gas → REVERT
         let summary = `<div class="node-summary">`;
         if (op) summary += `<span class="op">${esc(op)}</span>`;
-        if (callee) summary += `<span class="addr">${addrLinks(callee)}</span>`;
+        if (callee) summary += `<span class="addr">${addrLinks(callee, labelMap)}</span>`;
         if (sigText) summary += `<span style="color:#9254de;font-weight:600;" title="selector ${esc(selector)}">${sigText}</span>`;
         else if (selector) summary += `<span class="sel" title="selector">${esc(selector)}</span>`;
         if (value && node.nodeType !== 3) summary += `<span class="value-tag" title="msg.value">${esc(value)}</span>`;
@@ -301,8 +310,8 @@
 
         // 详情（decoded 参数 / output / calldata / 存储值）
         let detailHtml = "";
-        const argsIn = renderArgsList(decoded.argsIn || decoded.args, decoded.args ? "args" : "argsIn");
-        const argsOut = renderArgsList(decoded.argsOut, "argsOut");
+        const argsIn = renderArgsList(decoded.argsIn || decoded.args, decoded.args ? "args" : "argsIn", labelMap);
+        const argsOut = renderArgsList(decoded.argsOut, "argsOut", labelMap);
         const hasDetail = argsIn || argsOut || nd.calldata || nd.output || (node.nodeType === 3 && slotVal) || revertMsg;
         if (hasDetail) {
             let inner = "";
@@ -319,17 +328,22 @@
         return `<div class="${cls}" style="margin-left:${indent}px;">${summary}${detailHtml}</div>`;
     }
 
-    function renderTrace(text) {
+    function renderTrace(text, labels) {
         const trace = tryParseTrace(text);
         if (!trace) {
             // 非 trace JSON：原始文本
             return `<pre class="raw-body">${esc(text)}</pre>`;
         }
+        // 地址 → label 映射（key 小写，便于大小写不敏感匹配）
+        const labelMap = new Map();
+        if (Array.isArray(labels)) {
+            labels.forEach(l => { if (l && l.address) labelMap.set(String(l.address).toLowerCase(), l.label || ""); });
+        }
         // 忽略 nodeType=3（存储读写）和 nodeType=4 的节点，不参与渲染与深度推导
         const visible = trace.nodeInfos.filter(n => n.nodeType !== 3 && n.nodeType !== 4);
         const items = deriveDepths(visible);
         const head = `<div class="hint" style="margin-bottom:8px;">trace · 共 <b>${items.length}</b> 个节点（已忽略 nodeType 3/4）· 按 caller→callee 地址链推导深度缩进</div>`;
-        return head + items.map(renderNode).join("");
+        return head + items.map(it => renderNode(it, labelMap)).join("");
     }
 
     function renderMeta(c) {
@@ -343,7 +357,7 @@
         if (c.capturedAt) parts.push(`<span class="kv">captured <b>${esc(c.capturedAt)}</b></span>`);
         if (c.receivedAt) parts.push(`<span class="kv">received <b>${esc(c.receivedAt)}</b></span>`);
         if (c.truncated) parts.push(`<span class="kv" style="color:#e6a23c;">已截断</span>`);
-        if (c.responseEnc) parts.push(`<span class="kv">enc <b>${esc(c.responseEnc)}</b></span>`);
+        if (c.responseEncoding) parts.push(`<span class="kv">enc <b>${esc(c.responseEncoding)}</b></span>`);
         return parts.join("");
     }
 
@@ -371,13 +385,36 @@
             }
             // 列表按 id 升序返回，最新在最后；下拉按最新优先展示
             const ordered = list.slice().reverse();
+            // 缓存到全局，供 loadCapture 找 address-label 关联用
+            window.gCaptures = ordered.map(c => ({ id: c.id, url: c.url, method: c.method, status: c.status }));
             sel.innerHTML = ordered.map(c => {
-                const label = `#${c.id} · ${c.method || "?"} ${shortUrl(c.url)} · ${c.status}`;
+                const tag = isTraceUrl(c.url) ? "[trace] " : "";
+                const label = `${tag}#${c.id} · ${c.method || "?"} ${shortUrl(c.url)} · ${c.status}`;
                 return `<option value="${c.id}">${esc(label)}</option>`;
             }).join("");
             // 默认选最新（ordered[0] 即最大 id）
             sel.value = ordered[0].id;
             await loadCapture();
+            // 异步补 txnHash 到 trace 类 option（需逐条详情取 requestBody，不阻塞主流程）
+            const traceCaps = ordered.filter(c => isTraceUrl(c.url));
+            if (traceCaps.length) {
+                Promise.all(traceCaps.map(c =>
+                    fetch(`${API_LIST}?id=${c.id}`).then(r => r.json()).then(d => {
+                        const cc = (d.captures || [])[0];
+                        const p = cc ? parsePayload(cc.requestBody) : {};
+                        return { id: c.id, txnHash: p.txnHash || "" };
+                    }).catch(() => ({ id: c.id, txnHash: "" }))
+                )).then(arr => {
+                    arr.forEach(x => {
+                        if (!x.txnHash) return;
+                        const opt = sel.querySelector(`option[value="${x.id}"]`);
+                        const cap = traceCaps.find(c => c.id === x.id);
+                        if (opt && cap) opt.textContent = `[trace] ${shortHash(x.txnHash)} #${cap.id} · ${cap.method || "?"} ${shortUrl(cap.url)} · ${cap.status}`;
+                    });
+                    // 部分浏览器对 selected option 文本更新不实时刷新，重设 value 触发刷新
+                    sel.value = String(ordered[0].id);
+                });
+            }
         } catch (err) {
             statusEl.className = "status error";
             statusEl.textContent = "加载列表失败：" + err.message;
@@ -394,6 +431,29 @@
         } catch (e) {
             return u.length > 50 ? u.slice(0, 50) + "…" : u;
         }
+    }
+
+    function shortHash(h) {
+        if (!h) return "";
+        return h.length > 12 ? h.slice(0, 8) + "…" + h.slice(-4) : h;
+    }
+
+    // 判断 capture URL 是否以某后缀结尾（取 pathname 比对，忽略 query）
+    const TRACE_SUFFIX = "/api/explorer/v2/onchain/tx/trace";
+    const LABEL_SUFFIX = "/api/explorer/v2/onchain/tx/address-label";
+    function urlEndsWith(u, suffix) {
+        if (!u) return false;
+        try { return new URL(u).pathname.endsWith(suffix); }
+        catch (e) { return String(u).endsWith(suffix); }
+    }
+    function isTraceUrl(u) { return urlEndsWith(u, TRACE_SUFFIX); }
+    function isLabelUrl(u) { return urlEndsWith(u, LABEL_SUFFIX); }
+
+    // 解析 capture 请求体 payload（JSON）。请求体字段 requestBody 无编码（直接 text），enc 可选
+    function parsePayload(reqBody, enc) {
+        const raw = decodeBody(reqBody, enc);
+        if (!raw) return {};
+        try { return JSON.parse(raw) || {}; } catch (e) { return {}; }
     }
 
     async function loadCapture() {
@@ -422,7 +482,52 @@
             }
             metaEl.innerHTML = renderMeta(c);
             metaEl.style.display = "block";
-            const body = decodeBody(c.responseBody, c.responseEnc);
+
+            // 仅 URL 以 /tx/trace 结尾的 capture 才做 trace 解析；其他只显示 meta，不渲染
+            if (!isTraceUrl(c.url)) {
+                statusEl.textContent = "非 trace 数据（URL 不以 /tx/trace 结尾），不渲染 trace。";
+                return;
+            }
+
+            // 解析请求体 payload → chainId / txnHash（请求体字段为 requestBody，无编码，直接 text）
+            const payload = parsePayload(c.requestBody);
+            const chainId = payload.chainId;
+            const txnHash = payload.txnHash || "";
+
+            // chainId 同步到链下拉框（真实 id，如 56=bsc）
+            const chainSel = document.getElementById("chainId");
+            if (chainId !== undefined && chainId !== null) {
+                const cidStr = String(chainId);
+                if (![...chainSel.options].some(o => o.value === cidStr)) {
+                    chainSel.insertAdjacentHTML("beforeend", `<option value="${esc(cidStr)}">${esc(cidStr)} · 未知链</option>`);
+                }
+                chainSel.value = cidStr;
+            }
+
+            // 找 address-label capture（payload.txnHash 与 trace 相同）→ 取 labels
+            let labels = [];
+            if (txnHash && Array.isArray(window.gCaptures)) {
+                const labelIds = window.gCaptures.filter(x => isLabelUrl(x.url)).map(x => x.id);
+                if (labelIds.length) {
+                    const results = await Promise.all(labelIds.map(lid =>
+                        fetch(`${API_LIST}?id=${encodeURIComponent(lid)}`).then(r => r.json()).catch(() => ({ captures: [] }))
+                    ));
+                    for (const r of results) {
+                        const cc = (r.captures || [])[0];
+                        if (!cc) continue;
+                        const p = parsePayload(cc.requestBody);
+                        if (p.txnHash === txnHash) {
+                            const respB = decodeBody(cc.responseBody, cc.responseEncoding);
+                            try {
+                                const obj = JSON.parse(respB || "{}");
+                                if (Array.isArray(obj.labels)) { labels = obj.labels; break; }
+                            } catch (e) {}
+                        }
+                    }
+                }
+            }
+
+            const body = decodeBody(c.responseBody, c.responseEncoding);
             if (!body) {
                 statusEl.textContent = "该 capture 响应体为空";
                 return;
@@ -431,7 +536,10 @@
             if (c.truncated) {
                 html += `<div class="truncated-warn">⚠ 响应体被扩展截断，可能无法完整解析</div>`;
             }
-            html += renderTrace(body);
+            if (txnHash) {
+                html += `<div class="hint" style="margin-bottom:8px;">txnHash: <b style="word-break:break-all;">${esc(txnHash)}</b> · chainId <b>${esc(chainId !== undefined ? chainId : "")}</b> · labels <b>${labels.length}</b> 条</div>`;
+            }
+            html += renderTrace(body, labels);
             traceEl.innerHTML = html;
             traceEl.style.display = "block";
             statusEl.style.display = "none";

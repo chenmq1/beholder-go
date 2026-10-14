@@ -33,9 +33,9 @@ async function onSettingsChanged(_changes, _area) {
 // 统一对账：先清掉所有 http/https 标签页的遗留会话（含上次 SW 孤儿），再按 bgEnabled+pageScope 重新附加
 async function reconcile() {
   const tabs = await chrome.tabs.query({ url: ['http://*/*', 'https://*/*'] });
-  console.log('[beholder] reconcile: pageScope=%s bgEnabled=%s tabs=%d',
-    JSON.stringify(settings.pageScope), settings.bgEnabled, tabs.length);
-  const want = (tab) => settings.bgEnabled && matchesPageScope(settings.pageScope, tab.url);
+  console.log('[beholder] reconcile: pageScopes=%o bgEnabled=%s tabs=%d',
+    settings.pageScopes, settings.bgEnabled, tabs.length);
+  const want = (tab) => settings.bgEnabled && matchesPageScope(settings.pageScopes, tab.url);
   for (const tab of tabs) {
     const tabId = tab.id;
     const w = want(tab);
@@ -59,7 +59,7 @@ async function onTabUpdated(tabId, info, tab) {
   if (!settings || !settings.bgEnabled) return;
   const url = info.url || tab.url || '';
   if (!/^https?:/i.test(url)) return;
-  const inScope = matchesPageScope(settings.pageScope, url);
+  const inScope = matchesPageScope(settings.pageScopes, url);
   console.log('[beholder] onTabUpdated tab=%d url=%s inScope=%s', tabId, url, inScope);
   if (attached.has(tabId)) {
     if (inScope) {
