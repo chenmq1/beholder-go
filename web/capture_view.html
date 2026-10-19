@@ -97,6 +97,27 @@
             white-space: pre-wrap; word-break: break-all;
         }
         .truncated-warn { color: #e6a23c; font-size: 12px; margin-bottom: 8px; }
+
+        /* 孤立 Sync 分析结果 */
+        .sol-card {
+            border: 1px solid #b3d8ff; border-radius: 8px; padding: 12px 14px;
+            margin-bottom: 10px; background: #f5faff;
+        }
+        .sol-title { font-weight: 700; color: #1d6fdb; margin-bottom: 8px; font-size: 13px; }
+        .sol-row { display: flex; gap: 8px; align-items: baseline; padding: 3px 0;
+            font-size: 13px; flex-wrap: wrap; }
+        .sol-row .k { color: #606266; min-width: 104px; flex: 0 0 104px; }
+        .sol-locate { color: #409eff; cursor: pointer; font-size: 11px; text-decoration: underline; }
+        .sol-next { color: #909399; font-size: 12px; }
+        .sol-none { padding: 10px 14px; background: #f0f9eb; border: 1px solid #c2e7b0;
+            border-radius: 8px; color: #529b2e; font-size: 13px; }
+        .node.locate-flash { box-shadow: 0 0 0 2px #e6a23c; background: #fdf6ec !important;
+            transition: box-shadow .2s; }
+        .taint-badge { font-size: 11px; padding: 1px 7px; border-radius: 9px; margin-left: 6px; }
+        .taint-badge.hit { background: #e1f3d8; color: #529b2e; border: 1px solid #b3e19d; }
+        .taint-badge.miss { background: #fef0f0; color: #f56c6c; border: 1px solid #fbc4c4; }
+        .taint-token { font-size: 11px; color: #67c23a; margin-left: 6px; }
+        .taint-token.sel { color: #e6a23c; }
     </style>
 </head>
 <body>
@@ -117,6 +138,12 @@
                 <button id="reloadBtn" onclick="loadCapture()">重新渲染</button>
             </div>
             <div class="field">
+                <button id="solidaryBtn" onclick="runSolidary()">查找孤立 Sync</button>
+            </div>
+            <div class="field">
+                <button id="taintBtn" onclick="runTaint()">查找用户输入</button>
+            </div>
+            <div class="field">
                 <label>链（地址外链用）</label>
                 <select id="chainId" onchange="loadCapture()">
                     <option value="1">1 · Ethereum</option>
@@ -132,6 +159,8 @@
     </div>
 
     <div class="card">
+        <div id="solidaryPanel" style="display:none; margin-bottom:16px;"></div>
+        <div id="taintPanel" style="display:none; margin-bottom:16px;"></div>
         <div id="meta" class="meta" style="display:none;"></div>
         <div id="status" class="status">点击“刷新列表”加载最近 capture</div>
         <div id="traceView" class="trace-view" style="display:none;"></div>
@@ -325,7 +354,7 @@
         }
 
         const cls = revert ? "node revert-node" : "node";
-        return `<div class="${cls}" style="margin-left:${indent}px;">${summary}${detailHtml}</div>`;
+        return `<div class="${cls}" id="tn-${node.nodeType}-${node.id}" style="margin-left:${indent}px;">${summary}${detailHtml}</div>`;
     }
 
     function renderTrace(text, labels) {
@@ -344,6 +373,252 @@
         const items = deriveDepths(visible);
         const head = `<div class="hint" style="margin-bottom:8px;">trace · 共 <b>${items.length}</b> 个节点（已忽略 nodeType 3/4）· 按 caller→callee 地址链推导深度缩进</div>`;
         return head + items.map(it => renderNode(it, labelMap)).join("");
+    }
+
+    // ===== 孤立 Sync 分析（判定逻辑对齐 internal/model/common/solidary_sync_event.go）=====
+    // Sync 后紧邻的下一个事件（同 trace 执行顺序）不是同 emitter 的 Swap/Mint/Burn → 孤立 Sync
+    const PAIR_TOPIC = {
+        "0x1c411e9a96e071241c2f21f7726b17ae89e3cab4c78be50e062b03a9fffbbad1": "Sync",
+        "0xd78ad95fa46c994b6551d0da85fc275fe613ce37657fb8d5e3d130840159d822": "Swap",
+        "0x4c209b5fc8ad50758f13e2e1088ba56a560dff690a1c6fef26394f4c03821c4f": "Mint",
+        "0xdccd412f0b1252819cb1fd330b93224ca42612892bb3f4f789976e6d81936496": "Burn"
+    };
+
+    function evTopic0(n) {
+        const t = (n.nodeData && n.nodeData.topics && n.nodeData.topics[0]) || "";
+        return String(t).toLowerCase();
+    }
+    function evAddr(n) {
+        return String((n.nodeData && (n.nodeData.contract || n.nodeData.caller)) || "").toLowerCase();
+    }
+    function evName(n) {
+        const dec = (n.nodeData && n.nodeData.decoded) || {};
+        return dec.signature || dec.name || PAIR_TOPIC[evTopic0(n)] || "未知事件";
+    }
+
+    // 从 trace 树构建 id -> 父树节点 id
+    function buildParentMap(trace) {
+        const parentOf = new Map();
+        (function build(nodes) {
+            for (const t of nodes) {
+                for (const ch of (t.children || [])) parentOf.set(ch.id, t.id);
+                build(t.children || []);
+            }
+        })(trace.trace || []);
+        return parentOf;
+    }
+
+    // 沿树向上找发出事件的调用帧（nodeType=1 且 callee 非空），取最近两帧：所在函数、直接 caller
+    function enclosingFrames(trace, parentOf, byId, eventId) {
+        const frames = [];
+        let pid = parentOf.get(eventId);
+        while (pid !== undefined && frames.length < 2) {
+            const info = byId.get(pid);
+            const nd = (info && info.nodeData) || {};
+            if (info && info.nodeType === 1 && nd.callee) {
+                frames.push(info);
+                if (frames.length === 2) break;
+            }
+            pid = parentOf.get(pid);
+        }
+        return frames;
+    }
+
+    function findSolidarySyncs(trace) {
+        const infos = trace.nodeInfos || [];
+        const byId = new Map(infos.map(n => [n.id, n]));
+        const parentOf = buildParentMap(trace);
+        const events = infos.filter(n => n.nodeType === 2); // nodeInfos 数组顺序即执行顺序
+        const out = [];
+        events.forEach((n, k) => {
+            if (PAIR_TOPIC[evTopic0(n)] !== "Sync") return;
+            const nx = events[k + 1] || null;
+            let solidary = true;
+            if (nx && evAddr(nx) === evAddr(n) &&
+                ["Swap", "Mint", "Burn"].includes(PAIR_TOPIC[evTopic0(nx)])) {
+                solidary = false;
+            }
+            if (solidary) {
+                out.push({
+                    sync: n,
+                    next: nx,
+                    frames: enclosingFrames(trace, parentOf, byId, n.id)
+                });
+            }
+        });
+        return out;
+    }
+
+    function frameSigHtml(frame) {
+        const dec = (frame.nodeData && frame.nodeData.decoded) || {};
+        if (dec.signature || dec.name) return renderSig(dec);
+        const sel = (frame.nodeData && frame.nodeData.selector) || "";
+        return sel ? esc(sel) : "(未解码调用)";
+    }
+
+    function locateLink(nodeType, id) {
+        return `<span class="sol-locate" onclick="locateNode(${nodeType}, ${id})">定位</span>`;
+    }
+
+    function locateNode(nodeType, id) {
+        const el = document.getElementById(`tn-${nodeType}-${id}`);
+        if (!el) return;
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+        el.classList.add("locate-flash");
+        setTimeout(() => el.classList.remove("locate-flash"), 2200);
+    }
+
+    function renderSolidary(found, labelMap) {
+        if (!found.length) {
+            return `<div class="sol-none">未发现孤立 Sync：所有 Sync 后均紧跟同地址 Swap/Mint/Burn。</div>`;
+        }
+        return found.map((f, i) => {
+            const pair = (f.sync.nodeData && f.sync.nodeData.contract) || "";
+            const [enc, caller] = f.frames;
+            const encNd = (enc && enc.nodeData) || {};
+            const callerNd = (caller && caller.nodeData) || {};
+            let html = `<div class="sol-card">
+                <div class="sol-title">孤立 Sync #${i + 1} · 事件 ${locateLink(2, f.sync.id)}</div>
+                <div class="sol-row"><span class="k">Sync 发出地址</span><span>${addrLinks(pair, labelMap)}</span></div>`;
+            if (enc) {
+                html += `<div class="sol-row"><span class="k">Sync 所在函数</span>
+                    <span style="color:#9254de;font-weight:600;">${frameSigHtml(enc)}</span>
+                    <span>${addrLinks(encNd.callee, labelMap)}</span>${locateLink(1, enc.id)}</div>`;
+            } else {
+                html += `<div class="sol-row"><span class="k">Sync 所在函数</span><span class="sol-next">未在 trace 树中找到调用帧</span></div>`;
+            }
+            if (caller) {
+                html += `<div class="sol-row"><span class="k">直接 caller</span>
+                    <span style="color:#9254de;font-weight:600;">${frameSigHtml(caller)}</span>
+                    <span>${addrLinks(callerNd.callee, labelMap)}</span>${locateLink(1, caller.id)}</div>`;
+            } else {
+                html += `<div class="sol-row"><span class="k">直接 caller</span>
+                    <span class="sol-next">入口交易</span></div>`;
+            }
+            if (f.next) {
+                const nextAddr = (f.next.nodeData && f.next.nodeData.contract) || "";
+                html += `<div class="sol-row"><span class="k">下一事件</span>
+                    <span class="sol-next">${esc(evName(f.next))} @ ${addrLinks(nextAddr, labelMap)}
+                    （非同地址 Swap/Mint/Burn，故判定为孤立）${locateLink(2, f.next.id)}</span></div>`;
+            } else {
+                html += `<div class="sol-row"><span class="k">下一事件</span><span class="sol-next">无（Sync 为 trace 最后一个事件）</span></div>`;
+            }
+            return html + `</div>`;
+        }).join("");
+    }
+
+    function runSolidary() {
+        const panel = document.getElementById("solidaryPanel");
+        panel.style.display = "block";
+        if (!window.gCurrent || !window.gCurrent.trace) {
+            panel.innerHTML = `<div class="sol-none" style="background:#fef0f0;border-color:#fbc4c4;color:#f56c6c;">请先加载一条 trace capture。</div>`;
+            return;
+        }
+        try {
+            const found = findSolidarySyncs(window.gCurrent.trace);
+            panel.innerHTML = `<div class="hint" style="margin-bottom:8px;">发现 <b>${found.length}</b> 个孤立 Sync（判定：Sync 后紧邻事件非同 emitter 的 Swap/Mint/Burn，对齐 solidary_sync_event 收集逻辑）</div>`
+                + renderSolidary(found, window.gCurrent.labelMap);
+            panel.scrollIntoView({ behavior: "smooth", block: "start" });
+        } catch (err) {
+            panel.innerHTML = `<div class="sol-none" style="background:#fef0f0;border-color:#fbc4c4;color:#f56c6c;">分析失败：${esc(err.message)}</div>`;
+        }
+    }
+
+    // ===== 用户输入调用分析（callee 地址 + selector 沿调用栈 calldata 向上溯源）=====
+    function hexNo0x(s) { return String(s || "").toLowerCase().replace("0x", ""); }
+
+    // 判断 frameId 是否为交易入口帧：其父为合成根节点（depth=-1，caller 与 calldata 均为空）或不存在
+    function isEntryFrame(frameId, parentOf, byId) {
+        const pid = parentOf.get(frameId);
+        if (pid === undefined) return true;
+        const p = byId.get(pid);
+        if (!p) return true;
+        const nd = p.nodeData || {};
+        return !nd.caller && !nd.calldata;
+    }
+
+    function findUserInputCalls(trace) {
+        const infos = trace.nodeInfos || [];
+        const byId = new Map(infos.map(n => [n.id, n]));
+        const parentOf = buildParentMap(trace);
+        const calls = infos.filter(n => n.nodeType === 1 && n.nodeData && n.nodeData.callee);
+        const results = [];
+        for (const c of calls) {
+            const a = hexNo0x(c.nodeData.callee);
+            const s = hexNo0x(c.nodeData.selector);
+            if (!a) continue;
+            const chain = [];
+            let missFrame = null;
+            let pid = parentOf.get(c.id);
+            while (pid !== undefined) {
+                const p = byId.get(pid);
+                const cd = hexNo0x(p && p.nodeData && p.nodeData.calldata);
+                const hitA = cd.includes(a);
+                const hasSel = !!s;
+                const hitS = hasSel ? cd.includes(s) : true;
+                if (hitA && hitS) {
+                    chain.push({ frame: p, hitA, hasSel, hitS });
+                    pid = parentOf.get(pid);
+                } else {
+                    missFrame = p || null;
+                    break;
+                }
+            }
+            if (chain.length) {
+                const top = chain[chain.length - 1].frame;
+                results.push({ start: c, chain, missFrame, reachedEntry: isEntryFrame(top.id, parentOf, byId) });
+            }
+        }
+        results.sort((x, y) => (y.reachedEntry - x.reachedEntry) || (y.chain.length - x.chain.length));
+        return { total: calls.length, results };
+    }
+
+    function renderTaint(r, labelMap) {
+        if (!r.results.length) {
+            return `<div class="sol-none">扫描 ${r.total} 个 CALL 节点，未发现 callee 地址与 selector 同时出现在任一父帧 calldata 中的调用（无用户输入驱动的内部调用）。</div>`;
+        }
+        const reached = r.results.filter(x => x.reachedEntry).length;
+        let html = `<div class="hint" style="margin-bottom:8px;">扫描 ${r.total} 个 CALL 节点，命中 ${r.results.length} 个，其中 <b style="color:#529b2e;">${reached}</b> 个传播到交易入口 calldata（用户输入）</div>`;
+        html += r.results.map((x, i) => {
+            const nd = x.start.nodeData;
+            let h = `<div class="sol-card">
+                <div class="sol-title" style="color:#722ed1;">用户输入调用 #${i + 1} · 传播 ${x.chain.length} 层
+                    <span class="taint-badge ${x.reachedEntry ? "hit" : "miss"}">${x.reachedEntry ? "到达交易输入" : "未到入口"}</span></div>
+                <div class="sol-row"><span class="k">起点调用</span>
+                    <span style="color:#9254de;font-weight:600;">${frameSigHtml(x.start)}</span>
+                    <span>${addrLinks(nd.callee, labelMap)}</span>${locateLink(1, x.start.id)}</div>`;
+            x.chain.forEach((it, lv) => {
+                const fnd = (it.frame.nodeData || {});
+                h += `<div class="sol-row"><span class="k">上溯 ${lv + 1} 层</span>
+                    <span style="color:#9254de;font-weight:600;">${frameSigHtml(it.frame)}</span>
+                    <span>${addrLinks(fnd.callee, labelMap)}</span>
+                    <span class="taint-token">地址 ✓</span>${it.hasSel ? `<span class="taint-token sel">selector ${it.hitS ? "✓" : "✗"}</span>` : ""}
+                    ${locateLink(1, it.frame.id)}</div>`;
+            });
+            if (!x.reachedEntry && x.missFrame) {
+                const mnd = (x.missFrame.nodeData || {});
+                h += `<div class="sol-row"><span class="k">传播中断于</span>
+                    <span class="sol-next">${frameSigHtml(x.missFrame)} ${mnd.callee ? addrLinks(mnd.callee, labelMap) : ""}（其 calldata 不再同时包含地址与 selector）${locateLink(1, x.missFrame.id)}</span></div>`;
+            }
+            return h + `</div>`;
+        }).join("");
+        return html;
+    }
+
+    function runTaint() {
+        const panel = document.getElementById("taintPanel");
+        panel.style.display = "block";
+        if (!window.gCurrent || !window.gCurrent.trace) {
+            panel.innerHTML = `<div class="sol-none" style="background:#fef0f0;border-color:#fbc4c4;color:#f56c6c;">请先加载一条 trace capture。</div>`;
+            return;
+        }
+        try {
+            const r = findUserInputCalls(window.gCurrent.trace);
+            panel.innerHTML = renderTaint(r, window.gCurrent.labelMap);
+            panel.scrollIntoView({ behavior: "smooth", block: "start" });
+        } catch (err) {
+            panel.innerHTML = `<div class="sol-none" style="background:#fef0f0;border-color:#fbc4c4;color:#f56c6c;">分析失败：${esc(err.message)}</div>`;
+        }
     }
 
     function renderMeta(c) {
@@ -463,8 +738,15 @@
         const statusEl = document.getElementById("status");
         const metaEl = document.getElementById("meta");
         const traceEl = document.getElementById("traceView");
+        const panelEl = document.getElementById("solidaryPanel");
+        const taintPanelEl = document.getElementById("taintPanel");
         const btn = document.getElementById("reloadBtn");
         btn.disabled = true;
+        window.gCurrent = null;
+        panelEl.style.display = "none";
+        panelEl.innerHTML = "";
+        taintPanelEl.style.display = "none";
+        taintPanelEl.innerHTML = "";
         statusEl.className = "status";
         statusEl.textContent = "加载 capture 详情中...";
         statusEl.style.display = "block";
@@ -543,6 +825,12 @@
             traceEl.innerHTML = html;
             traceEl.style.display = "block";
             statusEl.style.display = "none";
+
+            // 缓存当前 trace 与 labelMap，供“查找孤立 Sync”使用
+            const parsedTrace = tryParseTrace(body);
+            const labelMap = new Map();
+            (labels || []).forEach(l => { if (l && l.address) labelMap.set(String(l.address).toLowerCase(), l.label || ""); });
+            window.gCurrent = { trace: parsedTrace, labelMap };
         } catch (err) {
             statusEl.className = "status error";
             statusEl.textContent = "加载失败：" + err.message;
