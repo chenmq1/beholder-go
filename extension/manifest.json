@@ -1,12 +1,13 @@
 {
   "manifest_version": 3,
   "name": "Beholder 捕获器",
-  "version": "1.0.0",
+  "version": "1.0.7",
   "description": "将 DevTools 网络请求/响应一键发送到本机 Beholder 后端；支持按 URL 规则后台自动捕获响应体并上报",
   "permissions": [
     "debugger",
     "storage",
-    "tabs"
+    "tabs",
+    "scripting"
   ],
   "host_permissions": [
     "<all_urls>"
@@ -14,6 +15,17 @@
   "background": {
     "service_worker": "background.js"
   },
+  "content_scripts": [
+    {
+      "matches": [
+        "http://localhost/*",
+        "http://127.0.0.1/*"
+      ],
+      "js": ["bridge.js"],
+      "run_at": "document_start",
+      "all_frames": true
+    }
+  ],
   "devtools_page": "devtools.html",
   "action": {
     "default_popup": "popup.html",

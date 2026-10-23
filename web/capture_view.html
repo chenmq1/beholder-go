@@ -118,6 +118,12 @@
         .taint-badge.miss { background: #fef0f0; color: #f56c6c; border: 1px solid #fbc4c4; }
         .taint-token { font-size: 11px; color: #67c23a; margin-left: 6px; }
         .taint-token.sel { color: #e6a23c; }
+        .page-mode { background: #f0f5ff; border: 1px solid #adc6ff; border-radius: 4px;
+            padding: 8px 12px; margin-bottom: 12px; font-size: 13px; display: flex;
+            align-items: center; gap: 10px; flex-wrap: wrap; }
+        .page-mode .pm-url { color: #1d39c4; font-weight: 600; word-break: break-all; }
+        .page-mode #pollStatus { color: #666; }
+        .page-mode button { padding: 2px 10px; font-size: 12px; }
     </style>
 </head>
 <body>
@@ -126,6 +132,7 @@
     <h1>扩展捕获 · Trace 视图</h1>
 
     <div class="card">
+        <div id="pageModeBar" class="page-mode" style="display:none;"></div>
         <div class="form-row">
             <div class="field grow">
                 <label>选择 capture（默认最近一条）</label>
@@ -649,53 +656,71 @@
         metaEl.style.display = "none";
         traceEl.style.display = "none";
         try {
-            const resp = await fetch(API_LIST);
-            const data = await resp.json();
-            if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
-            const list = data.captures || [];
-            if (!list.length) {
+            const ordered = await fetchCaptureOptions();
+            if (!ordered.length) {
                 sel.innerHTML = "";
-                statusEl.textContent = "暂无 capture 数据（扩展尚未上报任何捕获）";
+                sel.dataset.ids = "";
+                statusEl.textContent = gPageFilter
+                    ? "该页面暂无 capture（后台标签页可能还在加载，等待自动刷新…）"
+                    : "暂无 capture 数据（扩展尚未上报任何捕获）";
                 return;
             }
-            // 列表按 id 升序返回，最新在最后；下拉按最新优先展示
-            const ordered = list.slice().reverse();
-            // 缓存到全局，供 loadCapture 找 address-label 关联用
-            window.gCaptures = ordered.map(c => ({ id: c.id, url: c.url, method: c.method, status: c.status }));
-            sel.innerHTML = ordered.map(c => {
-                const tag = isTraceUrl(c.url) ? "[trace] " : "";
-                const label = `${tag}#${c.id} · ${c.method || "?"} ${shortUrl(c.url)} · ${c.status}`;
-                return `<option value="${c.id}">${esc(label)}</option>`;
-            }).join("");
+            renderCaptureOptions(ordered, ordered[0].id);
             // 默认选最新（ordered[0] 即最大 id）
-            sel.value = ordered[0].id;
             await loadCapture();
-            // 异步补 txnHash 到 trace 类 option（需逐条详情取 requestBody，不阻塞主流程）
-            const traceCaps = ordered.filter(c => isTraceUrl(c.url));
-            if (traceCaps.length) {
-                Promise.all(traceCaps.map(c =>
-                    fetch(`${API_LIST}?id=${c.id}`).then(r => r.json()).then(d => {
-                        const cc = (d.captures || [])[0];
-                        const p = cc ? parsePayload(cc.requestBody) : {};
-                        return { id: c.id, txnHash: p.txnHash || "" };
-                    }).catch(() => ({ id: c.id, txnHash: "" }))
-                )).then(arr => {
-                    arr.forEach(x => {
-                        if (!x.txnHash) return;
-                        const opt = sel.querySelector(`option[value="${x.id}"]`);
-                        const cap = traceCaps.find(c => c.id === x.id);
-                        if (opt && cap) opt.textContent = `[trace] ${shortHash(x.txnHash)} #${cap.id} · ${cap.method || "?"} ${shortUrl(cap.url)} · ${cap.status}`;
-                    });
-                    // 部分浏览器对 selected option 文本更新不实时刷新，重设 value 触发刷新
-                    sel.value = String(ordered[0].id);
-                });
-            }
+            fillTraceOptionLabels(ordered);
         } catch (err) {
             statusEl.className = "status error";
             statusEl.textContent = "加载列表失败：" + err.message;
         } finally {
             btn.disabled = false;
         }
+    }
+
+    // 拉列表并按 ?page= 过滤，返回最新优先的 capture 摘要数组
+    async function fetchCaptureOptions() {
+        const resp = await fetch(API_LIST);
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+        let list = data.captures || [];
+        if (gPageFilter) list = list.filter(c => c.pageUrl === gPageFilter);
+        return list.slice().reverse(); // 后端按 id 升序，最新在最后
+    }
+
+    // 渲染下拉选项；idSet 未变化时不重建，避免轮询打断手动选择
+    function renderCaptureOptions(ordered, preferId) {
+        const sel = document.getElementById("capSelect");
+        const ids = ordered.map(c => c.id).join(",");
+        const prevValue = sel.value;
+        sel.dataset.ids = ids;
+        window.gCaptures = ordered.map(c => ({ id: c.id, url: c.url, method: c.method, status: c.status }));
+        sel.innerHTML = ordered.map(c => {
+            const tag = isTraceUrl(c.url) ? "[trace] " : "";
+            const label = `${tag}#${c.id} · ${c.method || "?"} ${shortUrl(c.url)} · ${c.status}`;
+            return `<option value="${c.id}">${esc(label)}</option>`;
+        }).join("");
+        sel.value = String(preferId || (ordered.some(c => String(c.id) === prevValue) ? prevValue : ordered[0].id));
+    }
+
+    // 异步补 txnHash 到 trace 类 option
+    function fillTraceOptionLabels(ordered) {
+        const sel = document.getElementById("capSelect");
+        const traceCaps = ordered.filter(c => isTraceUrl(c.url));
+        if (!traceCaps.length) return;
+        Promise.all(traceCaps.map(c =>
+            fetch(`${API_LIST}?id=${c.id}`).then(r => r.json()).then(d => {
+                const cc = (d.captures || [])[0];
+                const p = cc ? parsePayload(cc.requestBody) : {};
+                return { id: c.id, txnHash: p.txnHash || "" };
+            }).catch(() => ({ id: c.id, txnHash: "" }))
+        )).then(arr => {
+            arr.forEach(x => {
+                if (!x.txnHash) return;
+                const opt = sel.querySelector(`option[value="${x.id}"]`);
+                const cap = traceCaps.find(c => c.id === x.id);
+                if (opt && cap) opt.textContent = `[trace] ${shortHash(x.txnHash)} #${cap.id} · ${cap.method || "?"} ${shortUrl(cap.url)} · ${cap.status}`;
+            });
+        });
     }
 
     function shortUrl(u) {
@@ -839,8 +864,108 @@
         }
     }
 
+    // ===== 页面捕获模式（?page=<目标页URL>&auto=1，由扩展 bridge 跳入）=====
+    const qParams = new URLSearchParams(location.search);
+    const gPageFilter = qParams.get("page") || "";
+    const gAuto = qParams.get("auto") === "1";
+    let gPollTimer = null;
+    let gTraceLocked = false; // 已自动定位 trace，停止轮询
+    const POLL_INTERVAL = 2000;
+
+    function setPollStatus(text, isErr) {
+        const el = document.getElementById("pollStatus");
+        if (!el) return;
+        el.textContent = text;
+        el.style.color = isErr ? "#f56c6c" : "#666";
+    }
+
+    function initPageModeBar() {
+        if (!gPageFilter) return;
+        const bar = document.getElementById("pageModeBar");
+        bar.style.display = "flex";
+        bar.innerHTML = `<span>页面捕获模式，仅显示该页面的 capture：</span>
+            <span class="pm-url">${esc(gPageFilter)}</span>
+            <span id="pollStatus"></span>
+            ${gAuto ? '<button id="pollToggleBtn" onclick="togglePoll()">停止自动刷新</button>' : ""}`;
+    }
+
+    function togglePoll() {
+        if (gPollTimer) {
+            stopAutoPoll();
+        } else {
+            gTraceLocked = false;
+            startAutoPoll();
+        }
+    }
+
+    function startAutoPoll() {
+        const btn = document.getElementById("pollToggleBtn");
+        if (btn) btn.textContent = "停止自动刷新";
+        setPollStatus("等待该页面的捕获…");
+        autoTick();
+        gPollTimer = setInterval(autoTick, POLL_INTERVAL);
+    }
+
+    function stopAutoPoll() {
+        if (gPollTimer) { clearInterval(gPollTimer); gPollTimer = null; }
+        const btn = document.getElementById("pollToggleBtn");
+        if (btn) btn.textContent = "继续自动刷新";
+    }
+
+    // 轮询一次：列表变化才重建下拉；出现 trace 立即选中并停止；未出现 trace 时先展示最新一条
+    async function autoTick() {
+        let ordered;
+        try {
+            ordered = await fetchCaptureOptions();
+        } catch (e) {
+            setPollStatus("轮询失败：" + e.message, true);
+            return;
+        }
+        const sel = document.getElementById("capSelect");
+        if (!ordered.length) {
+            sel.innerHTML = "";
+            sel.dataset.ids = "";
+            window.gCaptures = [];
+            const statusEl = document.getElementById("status");
+            statusEl.className = "status";
+            statusEl.textContent = "等待后台标签页发起请求…";
+            statusEl.style.display = "block";
+            setPollStatus("尚未收到该页面的 capture，每 2 秒重试…");
+            return;
+        }
+        const before = sel.value;
+        const ids = ordered.map(c => c.id).join(",");
+        if (ids !== sel.dataset.ids) {
+            const keep = ordered.some(c => String(c.id) === before) ? before : String(ordered[0].id);
+            renderCaptureOptions(ordered, keep);
+            fillTraceOptionLabels(ordered);
+        }
+        const traceItem = ordered.find(c => isTraceUrl(c.url));
+        if (traceItem) {
+            if (!gTraceLocked) {
+                gTraceLocked = true;
+                sel.value = String(traceItem.id);
+                stopAutoPoll();
+                setPollStatus(`已自动定位 trace capture #${traceItem.id}，自动刷新已停止。`);
+                if (before !== String(traceItem.id)) await loadCapture();
+            }
+            return;
+        }
+        // trace 未到：自动展示最新一条（如 basic-info），继续等
+        if (!gTraceLocked && before !== String(ordered[0].id)) {
+            sel.value = String(ordered[0].id);
+            await loadCapture();
+        }
+        setPollStatus(`已收到 ${ordered.length} 条，等待 trace 接口…`);
+    }
+
     // 首次自动加载
-    refreshList();
+    initPageModeBar();
+    if (gPageFilter && gAuto) {
+        startAutoPoll();
+    } else {
+        refreshList();
+    }
 </script>
 </body>
 </html>

@@ -154,7 +154,7 @@
     function hashCell(txHash, chainId) {
         if (!txHash) return '<td class="addr"></td>';
         const ch = phalconChainByChain[chainId];
-        return `<td class="addr"><a class="tx" href="https://app.blocksec.com/phalcon/explorer/tx/${ch}/${txHash}?line=0" target="_blank">${txHash}</a></td>`;
+        return `<td class="addr"><a class="tx" href="https://app.blocksec.com/phalcon/explorer/tx/${ch}/${txHash}?line=0" target="_blank" data-bhcap title="点击：后台打开该页并捕获其 API，直接进入 capture-view（需启用扩展）">${txHash}</a></td>`;
     }
 
     function addrCell(addr, chainId) {
