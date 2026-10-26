@@ -636,7 +636,76 @@
         return parts.join("");
     }
 
-    async function refreshList() {
+    // 从 page 参数（BlockSec 交易页 URL）中解析 txHash
+    function parseTxHashFromPage(pageUrl) {
+        const s = String(pageUrl || "");
+        try {
+            for (const seg of new URL(s).pathname.split("/")) {
+                if (/^0x[0-9a-fA-F]{64}$/.test(seg)) return seg.toLowerCase();
+            }
+        } catch (e) { /* 非标准 URL，退回正则 */ }
+        const m = s.match(/0x[0-9a-fA-F]{64}/);
+        return m ? m[0].toLowerCase() : "";
+    }
+
+    // 取某条 capture 请求体里的 txnHash
+    async function fetchTxnHash(captureId) {
+        try {
+            const resp = await fetch(`${API_LIST}?id=${encodeURIComponent(captureId)}`);
+            const d = await resp.json();
+            const cc = (d.captures || [])[0];
+            return cc ? (parsePayload(cc.requestBody).txnHash || "") : "";
+        } catch (e) {
+            return "";
+        }
+    }
+
+    // page 模式：每秒轮询后端，trace 与 address-label 都到齐后按该 txHash 渲染
+    async function watchPage(pageUrl) {
+        const statusEl = document.getElementById("status");
+        const txHash = parseTxHashFromPage(pageUrl);
+        if (!txHash) {
+            statusEl.className = "status error";
+            statusEl.style.display = "block";
+            statusEl.textContent = "page 参数中未解析到 txHash：" + pageUrl;
+            return;
+        }
+        const started = Date.now();
+        const hashCache = new Map(); // captureId -> txnHash，避免每秒重复取详情
+        for (;;) {
+            let traceId = null;
+            let labelId = null;
+            try {
+                const resp = await fetch(API_LIST);
+                const data = await resp.json();
+                if (resp.ok) {
+                    for (const c of (data.captures || [])) {
+                        if (!isTraceUrl(c.url) && !isLabelUrl(c.url)) continue;
+                        let h = hashCache.get(c.id);
+                        if (h === undefined) {
+                            h = await fetchTxnHash(c.id);
+                            if (h) hashCache.set(c.id, h); // 取失败不缓存，下一轮再试
+                        }
+                        if (!h || h.toLowerCase() !== txHash) continue;
+                        if (isTraceUrl(c.url)) traceId = c.id;
+                        else labelId = c.id;
+                    }
+                }
+            } catch (e) { /* 后端暂不可达，继续轮询 */ }
+            if (traceId && labelId) { // 两者齐备才渲染
+                await refreshList(traceId);
+                return;
+            }
+            const secs = Math.round((Date.now() - started) / 1000);
+            statusEl.className = "status";
+            statusEl.style.display = "block";
+            statusEl.textContent =
+                `等待后端捕获 ${txHash.slice(0, 10)}…：trace ${traceId ? "✓" : "…"} / address-label ${labelId ? "✓" : "…"}，已等待 ${secs}s`;
+            await new Promise(r => setTimeout(r, 1000));
+        }
+    }
+
+    async function refreshList(preferId) {
         const sel = document.getElementById("capSelect");
         const btn = document.getElementById("refreshBtn");
         const statusEl = document.getElementById("status");
@@ -667,8 +736,10 @@
                 const label = `${tag}#${c.id} · ${c.method || "?"} ${shortUrl(c.url)} · ${c.status}`;
                 return `<option value="${c.id}">${esc(label)}</option>`;
             }).join("");
-            // 默认选最新（ordered[0] 即最大 id）
-            sel.value = ordered[0].id;
+            // 指定了 preferId（page 参数轮询命中）则选它，否则默认选最新（ordered[0] 即最大 id）
+            const chosen = (preferId != null && ordered.some(c => String(c.id) === String(preferId)))
+                ? String(preferId) : String(ordered[0].id);
+            sel.value = chosen;
             await loadCapture();
             // 异步补 txnHash 到 trace 类 option（需逐条详情取 requestBody，不阻塞主流程）
             const traceCaps = ordered.filter(c => isTraceUrl(c.url));
@@ -687,7 +758,7 @@
                         if (opt && cap) opt.textContent = `[trace] ${shortHash(x.txnHash)} #${cap.id} · ${cap.method || "?"} ${shortUrl(cap.url)} · ${cap.status}`;
                     });
                     // 部分浏览器对 selected option 文本更新不实时刷新，重设 value 触发刷新
-                    sel.value = String(ordered[0].id);
+                    sel.value = chosen;
                 });
             }
         } catch (err) {
@@ -839,8 +910,10 @@
         }
     }
 
-    // 首次自动加载
-    refreshList();
+    // 首次自动加载：带 page 参数时按 txHash 每秒轮询，齐备后渲染；否则保持原行为
+    const pageParam = new URLSearchParams(location.search).get("page");
+    if (pageParam) watchPage(pageParam);
+    else refreshList();
 </script>
 </body>
 </html>

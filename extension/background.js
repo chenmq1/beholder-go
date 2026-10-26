@@ -201,5 +201,10 @@ async function captureAndPost(tabId, state, requestId, req, rule) {
     capturedAt: new Date().toISOString()
   };
   const res = await postCapture(settings.backendUrl, payload);
-  if (!res.ok) console.warn(`[beholder-ext] post failed for ${req.url}:`, res.error);
+  if (!res.ok) {
+    console.warn(`[beholder-ext] post failed for ${req.url}:`, res.error);
+    return;
+  }
+  // 仅成功上报才计入 tabKeeper 的捕获进度
+  tabKeeperMarkCaptured(tabId, req.url);
 }

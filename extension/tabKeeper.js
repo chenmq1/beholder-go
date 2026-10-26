@@ -1,14 +1,13 @@
-// tabKeeper.js —— 响应 content.js 的 OPEN_AND_CAPTURE：后台静默打开目标页，加载完成后自动关闭
+// tabKeeper.js —— 响应 content.js 的 OPEN_AND_CAPTURE：后台静默打开目标页
+// 捕获到指定条数的网络请求（默认 2 条）后自动关闭；未达标则保留标签页，便于排查。
 // 由 background.js 通过 importScripts 加载；状态独立，不与后台捕获逻辑共享。
-// 后台标签页本身不特殊处理：仍按 bgEnabled + pageScopes + rules 走常规捕获。
 
-const TAB_KEEPER_CLOSE_MS = 5000;  // 页面 complete 后保留 5 秒，留时间给请求上报
-const TAB_KEEPER_MAX_MS = 20000;   // 兜底：页面始终不 complete 也必须关闭
+const TAB_KEEPER_EXPECTED = 2;       // 需要成功捕获的请求条数
+const TAB_KEEPER_CLOSE_DELAY = 1000; // 达标后再等 1 秒，确保最后一条上报落地
 
-const tabKeeperTabs = new Map();   // tabId -> { closeTimer, deadline }
+const tabKeeperTabs = new Map();     // tabId -> { urls: Set, closeTimer }
 
 chrome.runtime.onMessage.addListener(onTabKeeperMessage);
-chrome.tabs.onUpdated.addListener(onTabKeeperUpdated);
 chrome.tabs.onRemoved.addListener(onTabKeeperRemoved);
 
 function onTabKeeperMessage(msg) {
@@ -21,17 +20,18 @@ function onTabKeeperMessage(msg) {
 
 async function openTabKeeper(url) {
   const tab = await chrome.tabs.create({ url, active: false });
-  const tabId = tab.id;
-  const deadline = setTimeout(() => closeTabKeeper(tabId), TAB_KEEPER_MAX_MS);
-  tabKeeperTabs.set(tabId, { closeTimer: null, deadline });
-  console.log('[tabKeeper] 后台打开 tab=%d url=%s', tabId, url);
+  tabKeeperTabs.set(tab.id, { urls: new Set(), closeTimer: null });
+  console.log('[tabKeeper] 后台打开 tab=%d url=%s', tab.id, url);
 }
 
-function onTabKeeperUpdated(tabId, info) {
+// 由 background.js 在请求成功上报后调用；同一 URL 只计一次，重试不会重复累计
+function tabKeeperMarkCaptured(tabId, url) {
   const rec = tabKeeperTabs.get(tabId);
-  if (!rec) return;                                   // 只处理自己创建的标签页
-  if (info.status === 'complete' && !rec.closeTimer) { // 只排一次关闭计时
-    rec.closeTimer = setTimeout(() => closeTabKeeper(tabId), TAB_KEEPER_CLOSE_MS);
+  if (!rec || rec.closeTimer) return;
+  rec.urls.add(url || '');
+  console.log('[tabKeeper] tab=%d 已捕获 %d/%d', tabId, rec.urls.size, TAB_KEEPER_EXPECTED);
+  if (rec.urls.size >= TAB_KEEPER_EXPECTED) {
+    rec.closeTimer = setTimeout(() => closeTabKeeper(tabId), TAB_KEEPER_CLOSE_DELAY);
   }
 }
 
@@ -39,7 +39,6 @@ function onTabKeeperRemoved(tabId) {
   const rec = tabKeeperTabs.get(tabId);
   if (!rec) return;
   clearTimeout(rec.closeTimer);
-  clearTimeout(rec.deadline);
   tabKeeperTabs.delete(tabId);
 }
 
@@ -47,7 +46,6 @@ function closeTabKeeper(tabId) {
   const rec = tabKeeperTabs.get(tabId);
   if (rec) {
     clearTimeout(rec.closeTimer);
-    clearTimeout(rec.deadline);
     tabKeeperTabs.delete(tabId);
   }
   chrome.tabs.remove(tabId, () => {
