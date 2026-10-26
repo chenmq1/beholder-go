@@ -4,12 +4,13 @@
 // 注意：附加后页面顶部会出现“xx 已开始调试此浏览器”横幅，属正常现象；在弹窗里关闭开关即可全部分离。
 
 importScripts('settings.js');
+importScripts('tabKeeper.js');
 
 // tabId -> { url, requests: Map(requestId -> { url, method, postData }) }
 const attached = new Map();
 let settings = null;
 
-init();
+init().catch(e => console.warn('[beholder] init failed:', e && e.message));
 
 async function init() {
   settings = await loadSettings();
@@ -92,7 +93,16 @@ async function attachTab(tabId, url) {
       return false;
     }
   }
-  await chrome.debugger.sendCommand({ tabId }, 'Network.enable', { maxPostDataSize: 65536 });
+  // 标签页可能在 attach 后被关闭/导航，命令会以 “Detached while handling command” 失败
+  try {
+    await chrome.debugger.sendCommand({ tabId }, 'Network.enable', { maxPostDataSize: 65536 });
+  } catch (e) {
+    try { await chrome.debugger.detach({ tabId }); } catch (e2) { /* 已分离 */ }
+    attached.delete(tabId);
+    setBadge(tabId, 'ERR', '#a1260d');
+    console.warn(`[beholder-ext] Network.enable failed on tab ${tabId}:`, e && e.message);
+    return false;
+  }
   attached.set(tabId, { url: url || '', requests: new Map() });
   setBadge(tabId, 'ON', '#0e639c');
   return true;
