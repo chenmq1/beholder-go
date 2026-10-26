@@ -258,32 +258,29 @@
         return obj;
     }
 
-    // 推导调用链深度：caller→callee 地址匹配，caller="" 为根 depth0
-    function deriveDepths(nodes) {
-        const calleeDepth = new Map(); // callee地址 -> depth
-        const out = [];
-        let lastDepth = 0;
-        nodes.forEach((n, i) => {
-            const nd = n.nodeData || {};
-            const caller = nd.caller || "";
-            const callee = nd.callee || "";
-            const contract = nd.contract || "";
-            let depth;
-            if (caller === "" && callee) {
-                depth = 0;
-            } else if (caller && calleeDepth.has(caller)) {
-                depth = calleeDepth.get(caller) + 1;
-            } else if (contract && calleeDepth.has(contract)) {
-                // 存储节点：读写发生在该合约执行上下文内，用其 depth
-                depth = calleeDepth.get(contract);
-            } else {
-                depth = lastDepth;
+    // 推导调用链深度：按 trace.trace 的 children 树逐层 +1（id 全局唯一，避免同地址多次调用串扰）
+    // 隐藏节点（nodeType 3/4）不占层级；树中不存在的节点深度直接记为 0，不做兜底
+    function deriveDepths(trace, nodes) {
+        const visibleIds = new Set(nodes.map(n => String(n.id)));
+        const depthById = new Map();
+        (function walk(list, parentDepth) {
+            for (const t of (list || [])) {
+                const id = String(t.id);
+                const visible = visibleIds.has(id);
+                const d = visible ? parentDepth + 1 : parentDepth;
+                if (visible) depthById.set(id, d);
+                walk(t.children || [], d);
             }
-            if (callee) calleeDepth.set(callee, depth);
-            lastDepth = depth;
-            out.push({ node: n, nd, depth, index: i });
+        })((trace && trace.trace) || [], -1); // 起始 -1：顶层可见节点 depth 为 0
+        return nodes.map((node, index) => {
+            const id = String(node.id);
+            return {
+                node,
+                nd: node.nodeData || {},
+                depth: depthById.has(id) ? depthById.get(id) : 0,
+                index
+            };
         });
-        return out;
     }
 
     function argRow(a, labelMap) {
@@ -370,8 +367,8 @@
         }
         // 忽略 nodeType=3（存储读写）和 nodeType=4 的节点，不参与渲染与深度推导
         const visible = trace.nodeInfos.filter(n => n.nodeType !== 3 && n.nodeType !== 4);
-        const items = deriveDepths(visible);
-        const head = `<div class="hint" style="margin-bottom:8px;">trace · 共 <b>${items.length}</b> 个节点（已忽略 nodeType 3/4）· 按 caller→callee 地址链推导深度缩进</div>`;
+        const items = deriveDepths(trace, visible);
+        const head = `<div class="hint" style="margin-bottom:8px;">trace · 共 <b>${items.length}</b> 个节点（已忽略 nodeType 3/4）· 按 trace.trace 的 children 树推导深度缩进</div>`;
         return head + items.map(it => renderNode(it, labelMap)).join("");
     }
 
