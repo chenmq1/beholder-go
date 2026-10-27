@@ -110,6 +110,9 @@ func main() {
 	r.StaticFile("/capture-view", "./web/capture_view.html")
 	// 前端共享资源：全局顶部菜单脚本（各页面用 <nav data-active> + <script src="/web/nav.js">）
 	r.StaticFile("/web/nav.js", "./web/nav.js")
+	// capture_view 页面的分析脚本：孤立 Sync / 用户输入调用
+	r.StaticFile("/web/solidary_sync.js", "./web/solidary_sync.js")
+	r.StaticFile("/web/user_input_taint.js", "./web/user_input_taint.js")
 
 	// 获取服务端口
 	port := viper.GetInt("app.port")
