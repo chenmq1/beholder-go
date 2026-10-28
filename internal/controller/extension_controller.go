@@ -1,8 +1,12 @@
 package controller
 
 import (
+	"encoding/json"
+	"io"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"time"
@@ -40,20 +44,63 @@ type ExtensionCapture struct {
 
 const maxExtensionCaptures = 50
 
+// 扩展配置持久化路径（相对于后端工作目录，即项目根目录）
+const extensionConfigPath = "./extension/config/beholder-settings.json"
+
 func NewExtensionController() *ExtensionController {
 	return &ExtensionController{}
 }
 
 // RegisterRoutes 注册路由：
 //
-//	POST /api/extension/capture   扩展上报捕获数据
-//	GET  /api/extension/captures  查询缓存（?id=N 查看单条完整内容，默认列表模式仅含响应体预览）
+//	POST /api/extension/capture       扩展上报捕获数据
+//	GET  /api/extension/captures      查询缓存（?id=N 查看单条完整内容，默认列表模式仅含响应体预览）
+//	POST /api/extension/config/save   把扩展设置 JSON 写入 extension/config/beholder-settings.json
+//	GET  /api/extension/config/load   读取上述配置文件
 func (c *ExtensionController) RegisterRoutes(router *gin.Engine) {
 	ext := router.Group("/api/extension")
 	{
 		ext.POST("/capture", c.capture)
 		ext.GET("/captures", c.list)
+		ext.POST("/config/save", c.saveConfig)
+		ext.GET("/config/load", c.loadConfig)
 	}
+}
+
+// saveConfig 接收扩展设置 JSON 并按原样落盘
+func (c *ExtensionController) saveConfig(ctx *gin.Context) {
+	body, err := io.ReadAll(ctx.Request.Body)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "read body: " + err.Error()})
+		return
+	}
+	if !json.Valid(body) {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid json"})
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(extensionConfigPath), 0o755); err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "mkdir: " + err.Error()})
+		return
+	}
+	if err := os.WriteFile(extensionConfigPath, body, 0o644); err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "write: " + err.Error()})
+		return
+	}
+	ctx.JSON(http.StatusOK, gin.H{"ok": true, "path": extensionConfigPath, "bytes": len(body)})
+}
+
+// loadConfig 读取配置文件；文件不存在时返回 404
+func (c *ExtensionController) loadConfig(ctx *gin.Context) {
+	body, err := os.ReadFile(extensionConfigPath)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if os.IsNotExist(err) {
+			status = http.StatusNotFound
+		}
+		ctx.JSON(status, gin.H{"error": "read: " + err.Error(), "path": extensionConfigPath})
+		return
+	}
+	ctx.Data(http.StatusOK, "application/json; charset=utf-8", body)
 }
 
 // capture 接收扩展上报

@@ -21,6 +21,8 @@
     .switch { display: flex; align-items: center; gap: 8px; }
     #testResult { margin-left: 8px; color: #6a9955; }
     #testResult.err { color: #f48771; }
+    #cfgResult { margin-left: 8px; color: #6a9955; }
+    #cfgResult.err { color: #f48771; }
     .hint { color: #808080; font-size: 11px; margin-top: 4px; }
     .empty { color: #808080; }
   </style>
@@ -37,6 +39,15 @@
       <span id="testResult"></span>
     </div>
     <div class="hint">上报接口：POST {后端}/api/extension/capture；查询：GET {后端}/api/extension/captures</div>
+  </section>
+
+  <section>
+    <div class="row">
+      <button id="saveConfig">保存配置</button>
+      <button id="loadConfig">读取配置</button>
+      <span id="cfgResult"></span>
+    </div>
+    <div class="hint">配置备份到后端机器的 extension/config/beholder-settings.json</div>
   </section>
 
   <section>

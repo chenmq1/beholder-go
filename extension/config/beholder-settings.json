@@ -1,0 +1,1 @@
+{"backendUrl":"http://127.0.0.1:8090","bgEnabled":true,"autoSend":true,"pageScopes":["^https://app\\.blocksec\\.com/phalcon/explorer/tx/"],"rules":[{"bodyPattern":"","enabled":true,"method":"POST","pattern":"/api/explorer/v2/onchain/tx/trace"},{"bodyPattern":"","enabled":true,"method":"POST","pattern":"/api/explorer/v2/onchain/tx/address-label"}],"pageScope":""}

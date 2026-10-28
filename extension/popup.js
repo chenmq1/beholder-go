@@ -5,13 +5,13 @@ init();
 
 async function init() {
   settings = await loadSettings();
-  document.getElementById('backendUrl').value = settings.backendUrl;
-  document.getElementById('bgEnabled').checked = !!settings.bgEnabled;
-  document.getElementById('autoSend').checked = !!settings.autoSend;
+  applySettingsToUI();
 
   document.getElementById('saveBackend').addEventListener('click', saveBackend);
   document.getElementById('backendUrl').addEventListener('change', saveBackend);
   document.getElementById('testConn').addEventListener('click', testConn);
+  document.getElementById('saveConfig').addEventListener('click', saveConfig);
+  document.getElementById('loadConfig').addEventListener('click', loadConfig);
   document.getElementById('bgEnabled').addEventListener('change', async (e) => {
     settings.bgEnabled = e.target.checked;
     await saveSettings({ bgEnabled: settings.bgEnabled }); // background.js 监听 storage.onChanged 自动附加/分离
@@ -28,6 +28,12 @@ async function init() {
     settings.rules.push({ pattern: '', bodyPattern: '', method: '', enabled: true });
     renderRules();
   });
+}
+
+function applySettingsToUI() {
+  document.getElementById('backendUrl').value = settings.backendUrl;
+  document.getElementById('bgEnabled').checked = !!settings.bgEnabled;
+  document.getElementById('autoSend').checked = !!settings.autoSend;
   renderScopes();
   renderRules();
 }
@@ -76,6 +82,52 @@ async function persistScopes() {
   // 去掉空白项；空列表 = 不限制
   settings.pageScopes = settings.pageScopes.filter(s => s && s.trim());
   await saveSettings({ pageScopes: settings.pageScopes });
+}
+
+// 保存当前配置到后端机器上的 extension/config/beholder-settings.json
+async function saveConfig() {
+  const el = document.getElementById('cfgResult');
+  el.textContent = '…';
+  el.className = '';
+  try {
+    const resp = await fetch(`${settings.backendUrl}/api/extension/config/save`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(settings)
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    el.textContent = `已保存 ${data.bytes} 字节 → ${data.path}`;
+  } catch (e) {
+    el.className = 'err';
+    el.textContent = `保存失败：${(e && e.message) || e}`;
+  }
+}
+
+// 从后端机器上的配置文件读取并应用
+async function loadConfig() {
+  const el = document.getElementById('cfgResult');
+  el.textContent = '…';
+  el.className = '';
+  try {
+    const resp = await fetch(`${settings.backendUrl}/api/extension/config/load`);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('配置文件格式无效');
+    settings = Object.assign({}, DEFAULT_SETTINGS, {
+      backendUrl: typeof data.backendUrl === 'string' && data.backendUrl ? data.backendUrl : DEFAULT_SETTINGS.backendUrl,
+      bgEnabled: !!data.bgEnabled,
+      autoSend: !!data.autoSend,
+      pageScopes: Array.isArray(data.pageScopes) ? data.pageScopes.filter(s => typeof s === 'string') : [],
+      rules: Array.isArray(data.rules) ? data.rules.filter(r => r && typeof r.pattern === 'string') : []
+    });
+    await saveSettings(settings);
+    applySettingsToUI();
+    el.textContent = '已读取并应用';
+  } catch (e) {
+    el.className = 'err';
+    el.textContent = `读取失败：${(e && e.message) || e}`;
+  }
 }
 
 async function testConn() {
