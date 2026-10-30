@@ -8,6 +8,7 @@ import (
 	"github.com/beholder-daemon/config"
 	"github.com/beholder-daemon/internal/controller"
 	"github.com/beholder-daemon/internal/service"
+	"github.com/beholder-daemon/internal/service/getcode"
 	"github.com/beholder-daemon/internal/utils"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -81,7 +82,9 @@ func main() {
 	defer publisher.Close()
 
 	// 注册控制器路由（含即时事件查询 /api/instant/*，面向前端实时调用，不入库）
-	beholderController := controller.NewBeholderController(db, publisher, web3Clients)
+	// getCodeService 供 capture 页查询 caller 地址的已验证源代码（命中则落库 contract_code）
+	getCodeService := getcode.NewGetCodeService(db, config.NewChains(), ethClients)
+	beholderController := controller.NewBeholderController(db, publisher, web3Clients, getCodeService)
 	beholderController.RegisterRoutes(r)
 
 	// 浏览器扩展上报（/api/extension/*，内存环形缓存，不入库）

@@ -13,6 +13,7 @@ import (
 	"github.com/beholder-daemon/internal/model/uniswapcallback"
 	modelwl "github.com/beholder-daemon/internal/model/watchlist"
 	"github.com/beholder-daemon/internal/service"
+	"github.com/beholder-daemon/internal/service/getcode"
 	"github.com/beholder-daemon/internal/utils"
 	"github.com/beholder-daemon/internal/service/watchlist"
 	"github.com/gin-gonic/gin"
@@ -27,10 +28,11 @@ type BeholderController struct {
 	eventInstant    *instantcommon.EventInstantService
 	txVerifyInstant *instantcommon.TxVerifyService
 	watchlistSvc    *watchlist.Service
+	getCodeService  *getcode.GetCodeService
 }
 
 // NewBeholderController 创建 BeholderController 实例
-func NewBeholderController(db *gorm.DB, publisher *service.RabbitMQPublisher, clients map[string]*utils.Web3Client) *BeholderController {
+func NewBeholderController(db *gorm.DB, publisher *service.RabbitMQPublisher, clients map[string]*utils.Web3Client, getCodeService *getcode.GetCodeService) *BeholderController {
 	return &BeholderController{
 		db:              db,
 		publisher:       publisher,
@@ -38,6 +40,7 @@ func NewBeholderController(db *gorm.DB, publisher *service.RabbitMQPublisher, cl
 		eventInstant:    instantcommon.NewEventInstantService(clients, db),
 		txVerifyInstant: instantcommon.NewTxVerifyService(clients, db),
 		watchlistSvc:    watchlist.NewService(db, clients),
+		getCodeService:  getCodeService,
 	}
 }
 
@@ -47,6 +50,8 @@ func (c *BeholderController) RegisterRoutes(router *gin.Engine) {
 	{
 		// 合约代码相关路由
 		api.GET("/code/:tokenAddress", c.getCodeByToken)
+		// 仅获取已验证源代码（命中则落库 contract_code），供 capture 页 caller 地址展示
+		api.GET("/contract/verified", c.getVerifiedCode)
 
 		// 交易对相关路由
 		pairs := api.Group("/pairs")
@@ -722,6 +727,26 @@ func (c *BeholderController) getCodeByToken(ctx *gin.Context) {
 	}
 
 	ctx.JSON(http.StatusOK, code)
+}
+
+// getVerifiedCode 仅获取指定地址的已验证源代码（命中 contract_code 时直接返回，否则请求 Etherscan 并落库）
+//
+//	Query: address（必填，0x+40hex）、chainId（默认 1）
+//	返回: {"address","chainId","status":"verified|unverified|failed","code","filename","message"}
+func (c *BeholderController) getVerifiedCode(ctx *gin.Context) {
+	address := strings.TrimSpace(ctx.Query("address"))
+	if len(address) != 42 || !strings.HasPrefix(strings.ToLower(address), "0x") {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "address 参数无效"})
+		return
+	}
+	chainId, err := strconv.Atoi(ctx.DefaultQuery("chainId", "1"))
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "chainId 参数无效"})
+		return
+	}
+
+	result := c.getCodeService.GetVerifiedCode(address, chainId)
+	ctx.JSON(http.StatusOK, result)
 }
 
 // sendPairsTask 发送交易对任务到RabbitMQ

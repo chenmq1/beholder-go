@@ -147,7 +147,7 @@ function renderSolidary(found, labelMap) {
         if (caller) {
             html += `<div class="sol-row"><span class="k">直接 caller</span>
                 <span style="color:#9254de;font-weight:600;">${frameSigHtml(caller)}</span>
-                <span>${addrLinks(callerNd.callee, labelMap)}</span>${locateLink(1, caller.id)}</div>`;
+                <span>${addrLinks(callerNd.callee, labelMap, true)}</span>${locateLink(1, caller.id)}</div>`;
         } else {
             html += `<div class="sol-row"><span class="k">直接 caller</span>
                 <span class="sol-next">入口交易</span></div>`;
@@ -189,6 +189,8 @@ function runSolidary() {
         panel.innerHTML = `<div class="hint" style="margin-bottom:8px;">发现 <b>${found.length}</b> 个孤立 Sync（判定：Sync 后紧邻事件非同 emitter 的 Swap/Mint/Burn，对齐 solidary_sync_event 收集逻辑）</div>`
             + renderSolidary(found, window.gCurrent.labelMap);
         panel.scrollIntoView({ behavior: "smooth", block: "start" });
+        // 异步检查直接 caller 地址的已验证代码（scan 与 de 之间的状态链接）
+        checkVerifiedLinks(panel);
     } catch (err) {
         panel.innerHTML = `<div class="sol-none" style="background:#fef0f0;border-color:#fbc4c4;color:#f56c6c;">分析失败：${esc(err.message)}</div>`;
     }

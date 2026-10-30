@@ -304,6 +304,8 @@ func (s *GetCodeService) getVerified(address string, chainId int) (map[string]in
 				} else {
 					fmt.Printf("verified response:%s\n", data["result"])
 					message += "parse failed, incorrect result structure in response."
+					// result 非数组多为「未验证」等业务提示，返回 data 供上层区分 unverified / failed
+					return data, message, nil
 				}
 			} else {
 				message += "parse failed, no result field in response."
@@ -313,6 +315,123 @@ func (s *GetCodeService) getVerified(address string, chainId int) (map[string]in
 		}
 
 	return nil, message, nil
+}
+
+// VerifiedCodeResult 仅获取已验证源代码的结果
+type VerifiedCodeResult struct {
+	Address  string `json:"address"`
+	ChainID  int    `json:"chainId"`
+	Status   string `json:"status"` // verified / unverified / failed
+	Code     string `json:"code,omitempty"`
+	Filename string `json:"filename,omitempty"`
+	Message  string `json:"message,omitempty"`
+}
+
+// GetVerifiedCode 复用 getVerified 的逻辑从 Etherscan API 获取已验证源代码。
+// 已命中 contract_code 中的验证代码时直接返回（不重复请求）；
+// 新获取到的代码压缩后写回 contract_code，仅覆盖验证相关字段。
+func (s *GetCodeService) GetVerifiedCode(address string, chainId int) *VerifiedCodeResult {
+	res := &VerifiedCodeResult{Address: address, ChainID: chainId}
+	if address == "" {
+		res.Status = "failed"
+		res.Message = "address 为空"
+		return res
+	}
+
+	// 先查库，命中已有验证代码则直接返回
+	var existing model.ContractCode
+	if err := s.db.Where("address = ? AND chain_id = ?", address, chainId).First(&existing).Error; err == nil {
+		if existing.VerifiedCodeDecompressed != "" {
+			res.Status = "verified"
+			res.Code = existing.VerifiedCodeDecompressed
+			res.Filename = existing.VerifiedFilename
+			return res
+		}
+	}
+
+	data, message, err := s.getVerified(address, chainId)
+	if err != nil {
+		res.Status = "failed"
+		res.Message = err.Error()
+		return res
+	}
+	if data == nil {
+		res.Status = "failed"
+		res.Message = message
+		return res
+	}
+
+	source, filename, notice, ok := extractVerifiedSource(data)
+	if !ok {
+		res.Status = "failed"
+		res.Message = message
+		return res
+	}
+	if strings.TrimSpace(source) == "" {
+		// result 为字符串时区分「未验证」与其它失败（限流、地址无效等）
+		if notice != "" && !isUnverifiedNotice(notice) {
+			res.Status = "failed"
+			res.Message = notice
+			return res
+		}
+		res.Status = "unverified"
+		res.Message = message
+		return res
+	}
+
+	// 保存验证代码，仅覆盖验证相关列，不影响二进制/反编译字段
+	if err := s.saveVerifiedCode(address, chainId, source, filename); err != nil {
+		res.Status = "failed"
+		res.Message = "save failed: " + err.Error()
+		return res
+	}
+
+	res.Status = "verified"
+	res.Code = source
+	res.Filename = filename
+	return res
+}
+
+// extractVerifiedSource 从 getsourcecode 响应中提取 SourceCode / ContractName。
+// result 非数组时以 notice 返回其字符串内容（如 "Contract source code not verified"）。
+func extractVerifiedSource(data map[string]interface{}) (source, filename, notice string, ok bool) {
+	result, exists := data["result"]
+	if !exists {
+		return "", "", "", false
+	}
+	switch r := result.(type) {
+	case []interface{}:
+		if len(r) == 0 {
+			return "", "", "", true
+		}
+		if m, ok := r[0].(map[string]interface{}); ok {
+			s, _ := m["SourceCode"].(string)
+			n, _ := m["ContractName"].(string)
+			return s, n, "", true
+		}
+		return "", "", "", true
+	case string:
+		return "", "", r, true
+	}
+	return "", "", "", true
+}
+
+// isUnverifiedNotice 判断 Etherscan 返回的提示是否为「未验证」而非请求失败
+func isUnverifiedNotice(notice string) bool {
+	lower := strings.ToLower(notice)
+	return strings.Contains(lower, "not verified") || strings.Contains(lower, "unable to locate")
+}
+
+// saveVerifiedCode 以 upsert 方式写入 contract_code 的验证相关字段
+func (s *GetCodeService) saveVerifiedCode(address string, chainId int, source, filename string) error {
+	tmp := &model.ContractCode{}
+	if err := tmp.SetVerifiedCodeCompressed(source); err != nil {
+		return err
+	}
+	return s.db.Exec(
+		"INSERT INTO contract_code (address, chain_id, verified_status, verified_code, verified_filename) VALUES (?, ?, ?, ?, ?) "+
+			"ON DUPLICATE KEY UPDATE verified_status = VALUES(verified_status), verified_code = VALUES(verified_code), verified_filename = VALUES(verified_filename)",
+		address, chainId, "downloaded", tmp.VerifiedCode, filename).Error
 }
 
 // getDecompiled 获取反编译代码
