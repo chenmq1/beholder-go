@@ -153,12 +153,24 @@ function renderSolidary(found, labelMap) {
                 <span class="sol-next">入口交易</span></div>`;
         }
         if (caller && f.transfers && f.transfers.length) {
+            const pairAddr = String((f.sync.nodeData && f.sync.nodeData.contract) || "").toLowerCase();
+            const ZERO_ADDR = "0x0000000000000000000000000000000000000000";
+            const DEAD_ADDR = "0x000000000000000000000000000000000000dead";
             f.transfers.forEach(tr => {
                 const trNd = tr.nodeData || {};
                 const token = trNd.contract || "";
                 const parties = evTransferParties(tr);
                 const val = evTransferValue(tr);
-                html += `<div class="sol-row"><span class="k">Sync 前 Transfer</span>
+                // pairAddr 为 to → 注入（注）；为 from → 接收方是 0x0/0xdead 则烧（烧），否则抽取（抽）
+                let dirTag = "";
+                if (parties.to === pairAddr) {
+                    dirTag = `<span class="sol-tag in" title="Sync 发出地址为 to（转入）">注</span>`;
+                } else if (parties.from === pairAddr) {
+                    dirTag = (parties.to === ZERO_ADDR || parties.to === DEAD_ADDR)
+                        ? `<span class="sol-tag burn" title="Sync 发出地址为 from，接收方为销毁地址（0x0 / 0xdead）">烧</span>`
+                        : `<span class="sol-tag out" title="Sync 发出地址为 from（转出）">抽</span>`;
+                }
+                html += `<div class="sol-row"><span class="k">Sync 前 Transfer</span>${dirTag}
                     <span class="sol-next">${addrLinks(token, labelMap)} ${addrLinks(parties.from, labelMap)} → ${addrLinks(parties.to, labelMap)}${val ? ` · <span class="value-tag">${esc(val)}</span>` : ""}${locateLink(2, tr.id)}</span></div>`;
             });
         } else if (caller) {

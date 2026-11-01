@@ -30,8 +30,8 @@ function findUserInputCalls(trace) {
             const cd = hexNo0x(p && p.nodeData && p.nodeData.calldata);
             const hitA = cd.includes(a);
             const hasSel = !!s;
-            const hitS = hasSel ? cd.includes(s) : true;
-            if (hitA && hitS) {
+            const hitS = hasSel ? cd.includes(s) : false;
+            if (hitA || hitS) {
                 chain.push({ frame: p, hitA, hasSel, hitS });
                 pid = parentOf.get(pid);
             } else {
@@ -50,10 +50,10 @@ function findUserInputCalls(trace) {
 
 function renderTaint(r, labelMap) {
     if (!r.results.length) {
-        return `<div class="sol-none">扫描 ${r.total} 个 CALL 节点，未发现 callee 地址与 selector 同时出现在任一父帧 calldata 中的调用（无用户输入驱动的内部调用）。</div>`;
+        return `<div class="sol-none">扫描 ${r.total} 个 CALL 节点，未发现 callee 地址或 selector 出现在任一父帧 calldata 中的调用（无用户输入驱动的内部调用）。</div>`;
     }
     const reached = r.results.filter(x => x.reachedEntry).length;
-    let html = `<div class="hint" style="margin-bottom:8px;">扫描 ${r.total} 个 CALL 节点，命中 ${r.results.length} 个，其中 <b style="color:#529b2e;">${reached}</b> 个传播到交易入口 calldata（用户输入）</div>`;
+    let html = `<div class="hint" style="margin-bottom:8px;">扫描 ${r.total} 个 CALL 节点，命中 ${r.results.length} 个（地址或 selector 匹配），其中 <b style="color:#529b2e;">${reached}</b> 个传播到交易入口 calldata（用户输入）</div>`;
     html += r.results.map((x, i) => {
         const nd = x.start.nodeData;
         let h = `<div class="sol-card">
@@ -64,16 +64,21 @@ function renderTaint(r, labelMap) {
                 <span>${addrLinks(nd.callee, labelMap)}</span>${locateLink(1, x.start.id)}</div>`;
         x.chain.forEach((it, lv) => {
             const fnd = (it.frame.nodeData || {});
+            // 明确标注本层匹配类型：地址 / selector / 两者
+            const matchTag = (it.hitA && it.hitS)
+                ? `<span class="taint-token both">地址 + selector 匹配</span>`
+                : it.hitA
+                    ? `<span class="taint-token addr">仅地址匹配</span>`
+                    : `<span class="taint-token sel">仅 selector 匹配</span>`;
             h += `<div class="sol-row"><span class="k">上溯 ${lv + 1} 层</span>
                 <span style="color:#9254de;font-weight:600;">${frameSigHtml(it.frame)}</span>
-                <span>${addrLinks(fnd.callee, labelMap)}</span>
-                <span class="taint-token">地址 ✓</span>${it.hasSel ? `<span class="taint-token sel">selector ${it.hitS ? "✓" : "✗"}</span>` : ""}
+                <span>${addrLinks(fnd.callee, labelMap)}</span>${matchTag}
                 ${locateLink(1, it.frame.id)}</div>`;
         });
         if (!x.reachedEntry && x.missFrame) {
             const mnd = (x.missFrame.nodeData || {});
             h += `<div class="sol-row"><span class="k">传播中断于</span>
-                <span class="sol-next">${frameSigHtml(x.missFrame)} ${mnd.callee ? addrLinks(mnd.callee, labelMap) : ""}（其 calldata 不再同时包含地址与 selector）${locateLink(1, x.missFrame.id)}</span></div>`;
+                <span class="sol-next">${frameSigHtml(x.missFrame)} ${mnd.callee ? addrLinks(mnd.callee, labelMap) : ""}（其 calldata 既不包含地址也不包含 selector）${locateLink(1, x.missFrame.id)}</span></div>`;
         }
         return h + `</div>`;
     }).join("");

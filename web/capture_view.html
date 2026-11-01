@@ -152,6 +152,14 @@
         .sol-row .k { color: #606266; min-width: 104px; flex: 0 0 104px; }
         .sol-locate { color: #409eff; cursor: pointer; font-size: 11px; text-decoration: underline; }
         .sol-next { color: #909399; font-size: 12px; }
+        /* Sync 前 Transfer 方向标签：注=Sync 地址为 to（转入），抽=Sync 地址为 from（转出），烧=转出到销毁地址 */
+        .sol-tag {
+            display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: .3px;
+            padding: 1px 5px; border-radius: 3px; border: 1px solid transparent;
+        }
+        .sol-tag.in { background: #e1f3d8; color: #529b2e; border-color: #b3e19d; }
+        .sol-tag.out { background: #fdf6ec; color: #e6a23c; border-color: #faecd8; }
+        .sol-tag.burn { background: #fef0f0; color: #f56c6c; border-color: #fbc4c4; }
         .sol-none { padding: 10px 14px; background: #f0f9eb; border: 1px solid #c2e7b0;
             border-radius: 8px; color: #529b2e; font-size: 13px; }
         .node.locate-flash { box-shadow: 0 0 0 2px #e6a23c; background: #fdf6ec !important;
@@ -159,7 +167,9 @@
         .taint-badge { font-size: 11px; padding: 1px 7px; border-radius: 9px; margin-left: 6px; }
         .taint-badge.hit { background: #e1f3d8; color: #529b2e; border: 1px solid #b3e19d; }
         .taint-badge.miss { background: #fef0f0; color: #f56c6c; border: 1px solid #fbc4c4; }
-        .taint-token { font-size: 11px; color: #67c23a; margin-left: 6px; }
+        .taint-token { font-size: 11px; margin-left: 6px; font-weight: 600; }
+        .taint-token.both { color: #529b2e; }
+        .taint-token.addr { color: #409eff; }
         .taint-token.sel { color: #e6a23c; }
     </style>
 </head>
