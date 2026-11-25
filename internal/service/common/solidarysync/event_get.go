@@ -34,6 +34,10 @@ func NewEventGetService(db *gorm.DB, clients map[string]*utils.Web3Client) *svcc
 		TaskType:    "solidarySyncGet",
 		CallbackKey: "solidarySync",
 		EventModel:  &modelcommon.SolidarySyncEvent{},
+		Direction:   "forward",
+		//MaxWorkers:  1,    // 单线程测试：定位高密度区 stepLength 收缩行为
+		SegmentSize: 9990, // 段长：每段 9990 块
+		StepLength:  499,  // 段内步长：每批查 499 块，避免首批发起即撞 10000 上限
 		Topics: [][]ethcommon.Hash{
 			{
 				ethcommon.HexToHash(SwapV2EventTopic),

@@ -16,8 +16,9 @@ import (
 	"github.com/beholder-daemon/internal/service/common/external_burn_old"
 	"github.com/beholder-daemon/internal/service/common/mint"
 	"github.com/beholder-daemon/internal/service/common/paircreated"
-	"github.com/beholder-daemon/internal/service/common/swapv2"
+	"github.com/beholder-daemon/internal/service/common/solidarymint"
 	"github.com/beholder-daemon/internal/service/common/solidarysync"
+	"github.com/beholder-daemon/internal/service/common/swapv2"
 	"github.com/beholder-daemon/internal/service/common/swapv3"
 	"github.com/beholder-daemon/internal/service/common/syncevent"
 	"github.com/beholder-daemon/internal/service/getcode"
@@ -46,6 +47,7 @@ type TaskProcessingService struct {
 	swapV2EventGetService      *svccommon.EventCollectService
 	swapV3EventGetService      *svccommon.EventCollectService
 	syncEventGetService        *svccommon.EventCollectService
+	solidaryMintGetService     *svccommon.EventCollectService
 	solidarySyncGetService     *svccommon.EventCollectService
 	commonEventGetService      *svccommon.EventCollectService
 }
@@ -133,6 +135,9 @@ func NewTaskProcessingService() (*TaskProcessingService, error) {
 	// 创建Sync事件收集服务实例
 	syncEventGetService := syncevent.NewEventGetService(db, web3Clients)
 
+	// 创建孤立Mint事件收集服务实例
+	solidaryMintGetService := solidarymint.NewEventGetService(db, web3Clients)
+
 	// 创建孤立Sync事件收集服务实例
 	solidarySyncGetService := solidarysync.NewEventGetService(db, web3Clients)
 
@@ -159,6 +164,7 @@ func NewTaskProcessingService() (*TaskProcessingService, error) {
 		swapV2EventGetService:      swapV2EventGetService,
 		swapV3EventGetService:      swapV3EventGetService,
 		syncEventGetService:        syncEventGetService,
+		solidaryMintGetService:     solidaryMintGetService,
 		solidarySyncGetService:     solidarySyncGetService,
 		commonEventGetService:      commonEventGetService,
 	}, nil
@@ -286,6 +292,15 @@ func (s *TaskProcessingService) ProcessTask(message map[string]interface{}) {
 				switch task {
 				case "collect":
 					s.commonEventGetService.ProcessTask(message)
+				default:
+					fmt.Printf("未知任务类型: %s\n", task)
+				}
+			}
+		} else if function == "solidaryMint" {
+			if task, ok := message["task"].(string); ok {
+				switch task {
+				case "collect":
+					s.solidaryMintGetService.ProcessTask(message)
 				default:
 					fmt.Printf("未知任务类型: %s\n", task)
 				}

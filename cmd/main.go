@@ -101,6 +101,8 @@ func main() {
 	r.StaticFile("/burn-events", "./web/burn_events.html")
 	// 前端页面：solidary_sync_event 直接查询
 	r.StaticFile("/solidary-sync-events", "./web/solidary_sync_events.html")
+	// 前端页面：solidary_mint_event 直接查询
+	r.StaticFile("/solidary-mint-events", "./web/solidary_mint_events.html")
 	// 前端页面：solidary_sync × burn_event_old 交集
 	r.StaticFile("/solidary-burn-cross", "./web/solidary_burn_cross.html")
 	// 前端页面：solidary_sync × pair_created_event 交集

@@ -28,7 +28,7 @@ const (
 	// defaultScanBlocks startBlock 缺省时从 endBlock 回溯的区块数
 	defaultScanBlocks = 10000
 	// defaultSegmentSize 并发分段大小（每段块数），与 EventCollectService 默认一致
-	defaultSegmentSize = 999
+	defaultSegmentSize = 9990
 	// defaultMaxWorkers 最大并发 worker 数，与 EventCollectService 默认一致
 	defaultMaxWorkers = 18
 )

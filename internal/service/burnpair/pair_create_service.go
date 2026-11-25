@@ -101,7 +101,7 @@ func (s *PairCreateService) ProcessTask(message map[string]interface{}) error {
 		return fmt.Errorf("构建收集器失败: %w", err)
 	}
 	if _, _, err := getevent.ForwardConcurrent(ctx, s.client, int64(startBlock), int64(endBlock), filter, collector, getevent.ConcurrentConfig{
-		SegmentSize: 5000,
+		SegmentSize: 9990,
 		MaxWorkers:  10,
 	}); err != nil {
 		return fmt.Errorf("处理区块链事件失败: %w", err)

@@ -191,7 +191,7 @@ func (s *ThreeGetService) ProcessTask(message map[string]interface{}) {
 		filter,
 		collector,
 		getevent.ConcurrentConfig{
-			SegmentSize: 999,
+			SegmentSize: 9990,
 			MaxWorkers:  18,
 		},
 	); err != nil {

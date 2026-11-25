@@ -11,6 +11,7 @@ const NAV_ITEMS = [
     { href: "/pair-sync-burn",       label: "Pair·Sync·Burn" },
     { href: "/burn-events",          label: "Burn Events" },
     { href: "/solidary-sync-events", label: "Solidary Sync" },
+    { href: "/solidary-mint-events", label: "Solidary Mint" },
     { href: "/solidary-burn-cross",  label: "Sync × Burn Old" },
     { href: "/solidary-pair-created", label: "Sync × PairCreated" },
     { href: "/send-event",           label: "发送任务" },

@@ -21,6 +21,7 @@ import (
 
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/jinzhu/gorm"
 
 	"github.com/beholder-daemon/internal/model/uniswapcallback"
@@ -47,10 +48,16 @@ type EventCollectConfig struct {
 	// Topics eth_getLogs 过滤 topics（FilterQuery.Topics），
 	// 如 [[eventSig], [addrA, addrB]] 表示 topic0 为 eventSig 且 topic1 为 addrA 或 addrB
 	Topics [][]common.Hash
-	// SegmentSize 并发分段大小（每段块数），<=0 时使用 999
+	// SegmentSize 并发分段大小（每段块数），<=0 时使用 DefaultSegmentSize(9990)
 	SegmentSize int
+	// StepLength 段内每批查询块数，<=0 时使用 DefaultStepLength(999)
+	StepLength int
 	// MaxWorkers 最大并发 worker 数，<=0 时使用 defaultWorkers
 	MaxWorkers int
+	// Direction 遍历方向："forward" 正向（从低到高），空值或其他为反向（默认）。
+	// forward 模式下单次查询结果数超限时，会采纳 provider 建议的端点缩小查询范围；
+	// 仅影响本线程，其他任务不受影响。
+	Direction string
 	// EventRegistry 可组合事件注册表：事件名 → 定义。
 	// 非空时启用组合模式：按 MQ 消息 events 参数（逗号分隔事件名，必填，
 	// 缺省/为空 = 不抓取）选取子集做多模型合并抓取——一次 eth_getLogs（topic0
@@ -83,9 +90,28 @@ func NewEventCollectService(db *gorm.DB, clients map[string]*utils.Web3Client, c
 		cfg.MaxWorkers = defaultWorkers
 	}
 	if cfg.SegmentSize <= 0 {
-		cfg.SegmentSize = 999
+		cfg.SegmentSize = getevent.DefaultSegmentSize
+	}
+	if cfg.StepLength <= 0 {
+		cfg.StepLength = getevent.DefaultStepLength
 	}
 	return &EventCollectService{db: db, clients: clients, cfg: cfg}
+}
+
+// runConcurrentCollect 按配置 Direction 选择正向或反向并发拉取事件，返回去重后的
+// 事件与每个主键的出现次数。Direction 为 "forward" 时走 ForwardConcurrent，否则
+// 走 BackwardConcurrent（默认）。
+func (s *EventCollectService) runConcurrentCollect(client *utils.Web3Client, startBlock, endBlock uint64, filter ethereum.FilterQuery, collector getevent.ConcurrentCollector) (map[string]types.Log, map[string]int, error) {
+	cc := getevent.ConcurrentConfig{
+		SegmentSize: s.cfg.SegmentSize,
+		StepLength:  s.cfg.StepLength,
+		MaxWorkers:  s.cfg.MaxWorkers,
+		AuxFilter:   s.cfg.AuxFilter,
+	}
+	if s.cfg.Direction == "forward" {
+		return getevent.ForwardConcurrent(context.Background(), client.EthClient, int64(startBlock), int64(endBlock), filter, collector, cc)
+	}
+	return getevent.BackwardConcurrent(context.Background(), client.EthClient, int64(startBlock), int64(endBlock), filter, collector, cc)
 }
 
 func (s *EventCollectService) getClientByChainId(chainId int) *utils.Web3Client {
@@ -267,18 +293,7 @@ func (s *EventCollectService) ProcessTask(message map[string]interface{}) {
 			s.db.Save(record)
 			return
 		}
-		if _, _, err := getevent.BackwardConcurrent(
-			context.Background(),
-			client.EthClient,
-			int64(startBlock),
-			int64(endBlock),
-			filter,
-			mc,
-			getevent.ConcurrentConfig{
-				SegmentSize: cfg.SegmentSize,
-				MaxWorkers:  cfg.MaxWorkers,
-			},
-		); err != nil {
+		if _, _, err := s.runConcurrentCollect(client, startBlock, endBlock, filter, mc); err != nil {
 			log.Printf("部分区块段处理失败: %v", err)
 		}
 		for _, r := range mc.Results() {
@@ -300,19 +315,7 @@ func (s *EventCollectService) ProcessTask(message map[string]interface{}) {
 			s.db.Save(record)
 			return
 		}
-		events, counts, err := getevent.BackwardConcurrent(
-			context.Background(),
-			client.EthClient,
-			int64(startBlock),
-			int64(endBlock),
-			filter,
-			collector,
-			getevent.ConcurrentConfig{
-				SegmentSize: cfg.SegmentSize,
-				MaxWorkers:  cfg.MaxWorkers,
-				AuxFilter:   cfg.AuxFilter,
-			},
-		)
+		events, counts, err := s.runConcurrentCollect(client, startBlock, endBlock, filter, collector)
 		if err != nil {
 			log.Printf("部分区块段处理失败: %v", err)
 		}

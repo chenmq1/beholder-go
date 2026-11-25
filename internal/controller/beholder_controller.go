@@ -97,6 +97,9 @@ func (c *BeholderController) RegisterRoutes(router *gin.Engine) {
 		// solidary_sync_event 直接查询（分页）
 		api.GET("/solidary-syncs/paged", c.getSolidarySyncsPaged)
 
+		// solidary_mint_event 直接查询（分页）
+		api.GET("/solidary-mints/paged", c.getSolidaryMintsPaged)
+
 		// solidary_sync_event × burn_event_old 交集查询（分页）
 		api.GET("/solidary-burn-cross/paged", c.getSolidaryBurnCrossPaged)
 
@@ -1092,6 +1095,73 @@ func (c *BeholderController) getSolidarySyncsPaged(ctx *gin.Context) {
 	}
 
 	var rows []syncRow
+	c.db.Raw(selectSQL, chainId, size, page*size).Scan(&rows)
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"content": rows,
+		"total":   total,
+		"page":    page,
+		"size":    size,
+		"chainId": chainId,
+	})
+}
+
+// getSolidaryMintsPaged 分页查询 solidary_mint_event 表
+// GET /api/solidary-mints/paged?chainId=2&page=0&size=100&sortBy=repeatCount
+// contract_address = 发出 mint 形态 Transfer 的合约（被 mint 的 token；LP mint 形态已在收集阶段排除）。
+// LEFT JOIN input 表（键：chain_id + address=contract_address）带出 status/input，可能为 NULL。
+func (c *BeholderController) getSolidaryMintsPaged(ctx *gin.Context) {
+	chainId, _ := strconv.Atoi(ctx.DefaultQuery("chainId", "2"))
+	page, _ := strconv.Atoi(ctx.DefaultQuery("page", "0"))
+	size, _ := strconv.Atoi(ctx.DefaultQuery("size", "100"))
+	sortBy := ctx.DefaultQuery("sortBy", "repeatCount")
+
+	if size <= 0 || size > 1000 {
+		size = 100
+	}
+	if page < 0 {
+		page = 0
+	}
+
+	// 排序白名单（防注入）；JOIN input 后列名需带表别名限定
+	validSort := map[string]string{
+		"repeatCount":     "s.repeat_count DESC",
+		"contractAddress": "s.contract_address ASC",
+		"txHash":          "s.tx_hash DESC",
+	}
+	orderClause, ok := validSort[sortBy]
+	if !ok {
+		orderClause = "s.repeat_count DESC"
+	}
+
+	var total int
+	c.db.Table("solidary_mint_event").Where("chain_id = ?", chainId).Count(&total)
+
+	selectSQL := `
+		SELECT
+			s.chain_id         AS chain_id,
+			s.contract_address AS contract_address,
+			s.tx_hash          AS tx_hash,
+			s.repeat_count     AS repeat_count,
+			i.status           AS status,
+			i.input            AS input
+		FROM solidary_mint_event s
+		LEFT JOIN input i
+		  ON i.chain_id = s.chain_id AND i.address = s.contract_address
+		WHERE s.chain_id = ?
+		ORDER BY ` + orderClause + `
+		LIMIT ? OFFSET ?`
+
+	type mintRow struct {
+		ChainID         int     `gorm:"column:chain_id" json:"chainId"`
+		ContractAddress string  `gorm:"column:contract_address" json:"contractAddress"`
+		TxHash          string  `gorm:"column:tx_hash" json:"txHash"`
+		RepeatCount     int     `gorm:"column:repeat_count" json:"repeatCount"`
+		Status          *int    `gorm:"column:status" json:"status"`
+		Input           *string `gorm:"column:input" json:"input"`
+	}
+
+	var rows []mintRow
 	c.db.Raw(selectSQL, chainId, size, page*size).Scan(&rows)
 
 	ctx.JSON(http.StatusOK, gin.H{
