@@ -54,6 +54,7 @@
 <body>
     <nav class="top" data-active="/event-query"></nav>
     <script src="/web/nav.js"></script>
+    <script src="/web/chain_links.js"></script>
     <h1>通用事件即时查询</h1>
     <div class="card">
         <div class="form-row">
@@ -207,24 +208,7 @@
     </div>
 
 <script>
-    // Phalcon 交易页：https://app.blocksec.com/phalcon/explorer/tx/<chain>/<tx>?line=0
-    const phalconChainByChain = {
-        1: "ethereum",
-        2: "bsc",
-        3: "polygon",
-        4: "arbitrum",
-        5: "base",
-        6: "optimism"
-    };
-    // 地址浏览器（地址列使用）
-    const explorerByChain = {
-        1: "https://etherscan.io",
-        2: "https://bscscan.com",
-        3: "https://polygonscan.com",
-        4: "https://arbiscan.io",
-        5: "https://basescan.org",
-        6: "https://optimistic.etherscan.io"
-    };
+    // 链外链配置统一在 /web/chain_links.js（phalconTxUrl / scanAddressUrl）
 
     function shortAddr(addr) {
         if (!addr) return "";
@@ -249,15 +233,14 @@
 
     function txCell(txHash, chainId) {
         if (!txHash) return '<td class="addr"></td>';
-        const phalconChain = phalconChainByChain[chainId] || "ethereum";
-        const href = `https://app.blocksec.com/phalcon/explorer/tx/${phalconChain}/${txHash}?line=0`;
+        const href = phalconTxUrl(chainId, txHash);
         return `<td class="addr"><a class="tx" href="${href}" target="_blank" title="${txHash}">${shortHash(txHash)}</a></td>`;
     }
 
     function addrCell(addr, chainId) {
         if (!addr) return '<td class="addr"></td>';
-        const explorer = explorerByChain[chainId] || "";
-        return `<td class="addr"><a class="tx" href="${explorer}/address/${addr}" target="_blank" title="${addr}">${shortAddr(addr)}</a></td>`;
+        const href = scanAddressUrl(chainId, addr);
+        return `<td class="addr"><a class="tx" href="${href}" target="_blank" title="${addr}">${shortAddr(addr)}</a></td>`;
     }
 
     function hashCell(h) {

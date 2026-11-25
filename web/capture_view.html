@@ -176,6 +176,7 @@
 <body>
     <nav class="top" data-active="/capture-view"></nav>
     <script src="/web/nav.js"></script>
+    <script src="/web/chain_links.js"></script>
     <h1>扩展捕获 · Trace 视图</h1>
 
     <div class="card">
@@ -240,19 +241,7 @@
 <script>
     const API_LIST = "/api/extension/captures";
 
-    // 链配置：dedaub 子路径参照 config/chains.go dedaubChainStrs；scan 域名按链对应
-    const explorerByChain = {
-        1:    "https://etherscan.io",
-        56:   "https://bscscan.com",
-        137:  "https://polygonscan.com",
-        42161: "https://arbiscan.io",
-        8453: "https://basescan.org",
-        10:   "https://optimistic.etherscan.io"
-    };
-    const dedaubByChain = {
-        1: "ethereum", 56: "binance", 137: "polygon",
-        42161: "arbitrum", 8453: "base", 10: "optimism"
-    };
+    // 链外链配置统一在 /web/chain_links.js（scanCodeUrl / dedaubAddressUrl，兼容真实 chainId）
     function currentChainId() { return Number(document.getElementById("chainId").value) || 1; }
 
     // addrLinks 在地址后挂 scan + dedaub 两个外链（地址格式 0x+40hex 才处理）
@@ -262,10 +251,8 @@
         labelMap = labelMap || new Map();
         if (!addr || !/^0x[0-9a-fA-F]{40}$/.test(addr)) return esc(addr);
         const cid = currentChainId();
-        const exp = explorerByChain[cid] || explorerByChain[1];
-        const dd = dedaubByChain[cid] || "ethereum";
-        const expHref = `${exp}/address/${addr}#code`;
-        const dedHref = `https://app.dedaub.com/${dd}/address/${addr}/decompiled`;
+        const expHref = scanCodeUrl(cid, addr);
+        const dedHref = dedaubAddressUrl(cid, addr);
         const label = labelMap.get(String(addr).toLowerCase()) || "";
         const display = label ? esc(label) : esc(addr);
         const title = label ? ` title="${esc(addr)}"` : "";

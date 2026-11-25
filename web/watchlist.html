@@ -45,6 +45,7 @@
 <body>
     <nav class="top" data-active="/watchlist"></nav>
     <script src="/web/nav.js"></script>
+    <script src="/web/chain_links.js"></script>
     <h1>函数调用监控（function_call）</h1>
     <div class="card">
         <div class="toolbar">
@@ -78,9 +79,7 @@
     </div>
 
     <script>
-        const CHAIN_NAMES = {1:"ethereum",2:"bsc",3:"polygon",4:"arbitrum",5:"base",6:"optimism"};
-        const EXPLORER = {1:"https://etherscan.io",2:"https://bscscan.com",3:"https://polygonscan.com",
-            4:"https://arbiscan.io",5:"https://basescan.org",6:"https://optimistic.etherscan.io"};
+        // 链外链配置统一在 /web/chain_links.js（scanAddressUrl / chainName）
         let listData = [];
 
         function escapeHtml(s) {
@@ -90,14 +89,14 @@
 
         function addrLink(addr, chainId) {
             if (!addr) return `<td class="addr"></td>`;
-            const ex = EXPLORER[chainId] || "";
-            return `<td class="addr"><a href="${ex}/address/${addr}" target="_blank" title="${addr}">${addr}</a></td>`;
+            const href = scanAddressUrl(chainId, addr);
+            return `<td class="addr"><a href="${href}" target="_blank" title="${addr}">${addr}</a></td>`;
         }
 
         function render() {
             const tbody = document.getElementById("tbody");
             tbody.innerHTML = listData.map((e, i) => {
-                const chainName = CHAIN_NAMES[e.chainId] || e.chainId;
+                const chainLabel = chainName(e.chainId) || e.chainId;
                 const stateCell = e._state
                     ? (e._state.ok
                         ? `<span class="badge ok">OK</span>${e._state.matched ? ' <span class="badge match">匹配</span>' : ' <span class="badge err">不符</span>'}`
@@ -106,7 +105,7 @@
                 return `
                     <tr>
                         <td>${i+1}</td>
-                        <td>${chainName} (${e.chainId})</td>
+                        <td>${chainLabel} (${e.chainId})</td>
                         ${addrLink(e.address, e.chainId)}
                         <td>${escapeHtml(e.functionName)}</td>
                         <td>${escapeHtml(e.argTypes)}</td>

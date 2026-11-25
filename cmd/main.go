@@ -115,6 +115,8 @@ func main() {
 	r.StaticFile("/capture-view", "./web/capture_view.html")
 	// 前端共享资源：全局顶部菜单脚本（各页面用 <nav data-active> + <script src="/web/nav.js">）
 	r.StaticFile("/web/nav.js", "./web/nav.js")
+	// 前端共享资源：链外链配置（Phalcon/Etherscan/Dedaub 的 slug 与域名，唯一来源）
+	r.StaticFile("/web/chain_links.js", "./web/chain_links.js")
 	// capture_view 页面的分析脚本：孤立 Sync / 用户输入调用
 	r.StaticFile("/web/solidary_sync.js", "./web/solidary_sync.js")
 	r.StaticFile("/web/user_input_taint.js", "./web/user_input_taint.js")

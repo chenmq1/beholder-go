@@ -71,6 +71,7 @@
 <body>
     <nav class="top" data-active="/solidary-pair-created"></nav>
     <script src="/web/nav.js"></script>
+    <script src="/web/chain_links.js"></script>
     <h1>Solidary Sync × PairCreated（交集：既在 solidary_sync 又在 pair_created_event）</h1>
     <div class="card">
         <div class="form-row">
@@ -131,15 +132,7 @@
     </div>
 
 <script>
-    const phalconChainByChain = {
-        1: "ethereum", 2: "bsc", 3: "polygon",
-        4: "arbitrum", 5: "base", 6: "optimism"
-    };
-    const explorerByChain = {
-        1: "https://etherscan.io", 2: "https://bscscan.com",
-        3: "https://polygonscan.com", 4: "https://arbiscan.io",
-        5: "https://basescan.org", 6: "https://optimistic.etherscan.io"
-    };
+    // 链外链配置统一在 /web/chain_links.js（phalconTxUrl / scanAddressUrl）
 
     const state = { content: [], total: 0, page: 0, size: 100, chainId: 2, sortBy: "syncRepeatCount", loading: false };
     // 当前编辑行的 address（同一时刻只允许编辑一行）
@@ -153,14 +146,14 @@
 
     function hashCell(txHash, chainId) {
         if (!txHash) return '<td class="addr"></td>';
-        const ch = phalconChainByChain[chainId];
-        return `<td class="addr"><a class="tx" href="https://app.blocksec.com/phalcon/explorer/tx/${ch}/${txHash}?line=0" target="_blank">${txHash}</a></td>`;
+        const href = phalconTxUrl(chainId, txHash);
+        return `<td class="addr"><a class="tx" href="${href}" target="_blank">${txHash}</a></td>`;
     }
 
     function addrCell(addr, chainId) {
         if (!addr) return '<td class="addr"></td>';
-        const explorer = explorerByChain[chainId] || "";
-        return `<td class="addr"><a class="tx" href="${explorer}/address/${addr}" target="_blank">${addr}</a></td>`;
+        const href = scanAddressUrl(chainId, addr);
+        return `<td class="addr"><a class="tx" href="${href}" target="_blank">${addr}</a></td>`;
     }
 
     async function loadPage(page) {

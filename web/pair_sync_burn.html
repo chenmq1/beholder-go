@@ -74,6 +74,7 @@
 <body>
     <nav class="top" data-active="/pair-sync-burn"></nav>
     <script src="/web/nav.js"></script>
+    <script src="/web/chain_links.js"></script>
     <h1>Pair · Sync · Burn 视图（v_pair_sync_burn）</h1>
     <div class="card">
         <div class="form-row">
@@ -136,24 +137,7 @@
     </div>
 
 <script>
-    // Phalcon 链名映射
-    const phalconChainByChain = {
-        1: "ethereum",
-        2: "bsc",
-        3: "polygon",
-        4: "arbitrum",
-        5: "base",
-        6: "optimism"
-    };
-    // 地址浏览器（地址列用）
-    const explorerByChain = {
-        1: "https://etherscan.io",
-        2: "https://bscscan.com",
-        3: "https://polygonscan.com",
-        4: "https://arbiscan.io",
-        5: "https://basescan.org",
-        6: "https://optimistic.etherscan.io"
-    };
+    // 链外链配置统一在 /web/chain_links.js（phalconTxUrl / scanAddressUrl）
 
     // 全局状态
     const state = { page: 0, size: 100, total: 0, chainId: 2, sortBy: "createdBlock", offset: 0, content: [] };
@@ -163,15 +147,14 @@
     // 地址列：完整地址 + 浏览器链接（不缩写）
     function addrCell(addr, chainId) {
         if (!addr) return `<td class="addr"></td>`;
-        const explorer = explorerByChain[chainId] || "";
-        return `<td class="addr"><a class="tx" href="${explorer}/address/${addr}" target="_blank" title="${addr}">${addr}</a></td>`;
+        const href = scanAddressUrl(chainId, addr);
+        return `<td class="addr"><a class="tx" href="${href}" target="_blank" title="${addr}">${addr}</a></td>`;
     }
 
     // txHash 列：完整 hash + Phalcon 链接
     function hashCell(hash, chainId) {
         if (!hash) return `<td class="addr"></td>`;
-        const phalconChain = phalconChainByChain[chainId] || "ethereum";
-        const href = `https://app.blocksec.com/phalcon/explorer/tx/${phalconChain}/${hash}?line=0`;
+        const href = phalconTxUrl(chainId, hash);
         return `<td class="addr"><a class="tx" href="${href}" target="_blank" title="${hash}">${hash}</a></td>`;
     }
 
@@ -195,7 +178,7 @@
 
     function tokenCell(addr, alias, chainId, reserve, decimals) {
         if (!addr) return `<td class="addr"></td>`;
-        const explorer = explorerByChain[chainId] || "";
+        const href = scanAddressUrl(chainId, addr);
         let label;
         if (alias) {
             const amount = formatReserve(reserve, decimals);
@@ -204,7 +187,7 @@
         } else {
             label = addr;
         }
-        return `<td class="addr"><a class="tx" href="${explorer}/address/${addr}" target="_blank" title="${addr}">${label}</a></td>`;
+        return `<td class="addr"><a class="tx" href="${href}" target="_blank" title="${addr}">${label}</a></td>`;
     }
 
     // HTML 转义（input 文本可能含特殊字符）
